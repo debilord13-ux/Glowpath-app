@@ -1,1447 +1,486 @@
-@file:OptIn(
-    ExperimentalFoundationApi::class,
-    ExperimentalMaterial3Api::class
-)
+@file:OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
 
 package com.musicplayer.ui.screens
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.AnimatedVisibility
+import android.net.Uri
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.CheckBoxOutlineBlank
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.WifiOff
-import androidx.compose.material.icons.rounded.Album
-import androidx.compose.material.icons.rounded.History
-import androidx.compose.material.icons.rounded.LibraryMusic
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material3.BottomSheetDefaults
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledIconButton
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.IconButtonDefaults
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TextFieldDefaults
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.airbnb.lottie.LottieProperty
-import com.airbnb.lottie.compose.LottieAnimation
-import com.airbnb.lottie.compose.LottieCompositionSpec
-import com.airbnb.lottie.compose.LottieConstants
-import com.airbnb.lottie.compose.animateLottieCompositionAsState
-import com.airbnb.lottie.compose.rememberLottieComposition
-import com.airbnb.lottie.compose.rememberLottieDynamicProperties
-import com.airbnb.lottie.compose.rememberLottieDynamicProperty
-import coil.compose.AsyncImage
-import com.musicplayer.R
-import com.musicplayer.data.DownloadState
-import com.musicplayer.data.OnlineAlbumDetail
-import com.musicplayer.data.OnlineAlbumSection
-import com.musicplayer.data.OnlineAlbumSheetState
-import com.musicplayer.data.OnlineAlbumSummary
-import com.musicplayer.data.OnlineSearchState
-import com.musicplayer.data.OnlineSong
-import com.musicplayer.data.Song
-import com.musicplayer.ui.components.BottomChromeExtraSpace
-import com.musicplayer.ui.components.DownloadButton
-import com.musicplayer.ui.components.LocalBottomChromeHeight
+import com.musicplayer.data.*
+import com.musicplayer.ui.components.*
 import com.musicplayer.ui.theme.LocalAppFontFamily
 import com.musicplayer.viewmodel.MusicViewModel
 import com.musicplayer.viewmodel.OnlineSearchViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
+internal data class OnlineSearchUiState(
+    val query: String = "",
+    val submittedQuery: String = "",
+    val result: OnlineSearchState = OnlineSearchState.Idle,
+    val history: List<String> = emptyList(),
+    val downloads: Map<String, DownloadState> = emptyMap(),
+    val downloadSongs: Map<String, OnlineSong> = emptyMap(),
+    val savedUrls: Set<String> = emptySet(),
+    val currentUrl: String? = null,
+    val isPlaying: Boolean = false,
+) {
+    fun isDownloaded(url: String) = url in savedUrls || downloads[url] is DownloadState.Done
+    fun isDownloading(url: String) = downloads[url] is DownloadState.Pending || downloads[url] is DownloadState.Progress
+}
+
+internal data class OnlineSearchActions(
+    val onQueryChange: (String) -> Unit = {},
+    val onSearch: (String) -> Unit = {},
+    val onClearQuery: () -> Unit = {},
+    val onPlay: (OnlineSong) -> Unit = {},
+    val onDownload: (OnlineSong) -> Unit = {},
+    val onAdd: (OnlineSong) -> Unit = {},
+    val onCancelDownload: (String) -> Unit = {},
+    val onRemoveHistory: (String) -> Unit = {},
+    val onClearHistory: () -> Unit = {},
+    val onOpenAlbum: (OnlineAlbumSummary) -> Unit = {},
+)
+
 @Composable
 fun OnlineSearchScreen(
     musicViewModel: MusicViewModel,
-    searchViewModel: OnlineSearchViewModel = viewModel()
+    searchViewModel: OnlineSearchViewModel = viewModel(),
+    isActive: Boolean = true,
 ) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
     val bridgeQuery by searchViewModel.bridgeQuery.collectAsState()
-    var query by remember { mutableStateOf("") }
-    val searchState by searchViewModel.searchState.collectAsState()
-    val albumSheetState by searchViewModel.albumSheetState.collectAsState()
-    val downloadStates by searchViewModel.downloadStates.collectAsState()
+    val submittedQuery by searchViewModel.submittedQuery.collectAsState()
+    var query by rememberSaveable { mutableStateOf(searchViewModel.submittedQuery.value) }
+    val result by searchViewModel.searchState.collectAsState()
+    val albumSheet by searchViewModel.albumSheetState.collectAsState()
+    val downloads by searchViewModel.downloadStates.collectAsState()
+    val downloadSongs by searchViewModel.downloadSongs.collectAsState()
     val readySongs by searchViewModel.readySongs.collectAsState()
-    val searchHistory by searchViewModel.searchHistory.collectAsState()
-    val addedSongs by musicViewModel.songs.collectAsState()
+    val history by searchViewModel.searchHistory.collectAsState()
+    val library by musicViewModel.songs.collectAsState()
+    val currentSong by musicViewModel.currentSong.collectAsState()
+    val isPlaying by musicViewModel.isPlaying.collectAsState()
     val keyboard = LocalSoftwareKeyboardController.current
-    val focusRequester = remember { FocusRequester() }
-    val albumSheetUiState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val processedDownloads = remember { mutableSetOf<String>() }
+    val libraryUris = remember(library) { library.mapTo(hashSetOf()) { it.uri } }
 
     LaunchedEffect(bridgeQuery) {
-        if (bridgeQuery.isNotBlank() && bridgeQuery != query) {
+        if (bridgeQuery.isNotBlank()) {
             query = bridgeQuery
             keyboard?.hide()
         }
     }
-
-    var selectedUrls by remember { mutableStateOf(setOf<String>()) }
-    val isSelectionMode = selectedUrls.isNotEmpty()
-
-    val locallyAdded = remember { mutableStateMapOf<String, Boolean>() }
-    // Когда загрузка завершилась — сразу кладём трек в главную библиотеку
     LaunchedEffect(readySongs) {
         readySongs.forEach { (url, song) ->
-            if (locallyAdded[url] == true) return@forEach
-            if (addedSongs.any { it.uri == song.uri }) {
-                locallyAdded[url] = true
-                return@forEach
+            if (processedDownloads.add(url) && song.uri !in libraryUris) {
+                musicViewModel.addDownloadedSong(song)
             }
-            musicViewModel.addDownloadedSong(song)
-            locallyAdded[url] = true
         }
     }
-    LaunchedEffect(addedSongs) {
-        readySongs.forEach { (url, song) ->
-            if (addedSongs.any { it.uri == song.uri }) locallyAdded[url] = true
-        }
+    val savedUrls = remember(readySongs, libraryUris) {
+        readySongs.filterValues { it.uri in libraryUris }.keys
     }
+    val currentUrl = readySongs.entries.firstOrNull { it.value.uri == currentSong?.uri }?.key
+        ?: currentSong?.uri?.toString()
+    val uiState = OnlineSearchUiState(query, submittedQuery, result, history, downloads,
+        downloadSongs, savedUrls, currentUrl, isPlaying)
+    val actions = OnlineSearchActions(
+        onQueryChange = { query = it },
+        onSearch = { value ->
+            query = value.trim()
+            searchViewModel.search(query)
+        },
+        onClearQuery = { query = ""; searchViewModel.search("") },
+        onPlay = { online ->
+            if (currentUrl == online.downloadUrl) {
+                musicViewModel.togglePlayPause()
+            } else {
+                // A completed download should play from the device, even without a network.
+                val song = readySongs[online.downloadUrl] ?: Song(
+                    id = online.downloadUrl.hashCode().toLong() and 0xFFFFFFFFL,
+                    title = online.title.ifBlank { "Без названия" },
+                    artist = online.artist,
+                    album = "Онлайн",
+                    duration = 0L,
+                    uri = Uri.parse(online.downloadUrl),
+                    albumArtUri = online.coverUrl.takeIf { it.isNotBlank() }?.let(Uri::parse),
+                )
+                musicViewModel.playSong(song)
+            }
+        },
+        onDownload = searchViewModel::startDownload,
+        onAdd = { online -> readySongs[online.downloadUrl]?.let(musicViewModel::addDownloadedSong) },
+        onCancelDownload = searchViewModel::cancelDownload,
+        onRemoveHistory = searchViewModel::removeHistoryQuery,
+        onClearHistory = searchViewModel::clearSearchHistory,
+        onOpenAlbum = searchViewModel::openAlbum,
+    )
+    OnlineSearchContent(uiState, actions, isActive)
 
-    fun playOnlineSong(song: OnlineSong, albumName: String = "Онлайн") {
-        val tempSong = Song(
-            id = song.downloadUrl.hashCode().toLong() and 0xFFFFFFFFL,
-            title = song.title.ifBlank { "Неизвестный трек" },
-            artist = song.artist,
-            album = albumName,
-            duration = 0L,
-            uri = android.net.Uri.parse(song.downloadUrl),
-            albumArtUri = null
-        )
-        musicViewModel.playSong(tempSong)
+    if (albumSheet !is OnlineAlbumSheetState.Hidden) {
+        OnlineAlbumSheet(albumSheet, uiState, actions,
+            onDismiss = searchViewModel::closeAlbum, onRetry = searchViewModel::retryAlbum)
     }
+}
 
-    fun markSongAdded(song: OnlineSong) {
-        readySongs[song.downloadUrl]?.let { downloadedSong ->
-            musicViewModel.addDownloadedSong(downloadedSong)
-            locallyAdded[song.downloadUrl] = true
-        }
+private enum class SearchFilter(val label: String) {
+    All("Все"), NotDownloaded("Не скачано"), Downloaded("Скачано")
+}
+
+/** Stateless data boundary keeps the real screen previewable and interaction-testable. */
+@Composable
+internal fun OnlineSearchContent(
+    state: OnlineSearchUiState,
+    actions: OnlineSearchActions,
+    isActive: Boolean = true,
+) {
+    val colors = MaterialTheme.colorScheme
+    val font = LocalAppFontFamily.current
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusRequester = remember { FocusRequester() }
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val listState = rememberLazyListState()
+    var selectedUrls by remember { mutableStateOf(setOf<String>()) }
+    var filter by rememberSaveable { mutableStateOf(SearchFilter.All) }
+    var showDownloads by rememberSaveable { mutableStateOf(false) }
+    var confirmClearHistory by remember { mutableStateOf(false) }
+    val selectionMode = selectedUrls.isNotEmpty()
+    val songs = (state.result as? OnlineSearchState.Success)?.songs.orEmpty()
+    val activeDownloads = state.downloads.values.count { it is DownloadState.Pending || it is DownloadState.Progress }
+    val bottomSpace = LocalBottomChromeHeight.current + BottomChromeExtraSpace
+    val compactHeight = LocalConfiguration.current.screenHeightDp < 500
+    val imeVisible = WindowInsets.isImeVisible
+
+    LaunchedEffect(state.submittedQuery, state.result is OnlineSearchState.Loading) {
+        selectedUrls = emptySet()
+        filter = SearchFilter.All
+        listState.scrollToItem(0)
     }
+    BackHandler(enabled = isActive && selectionMode) { selectedUrls = emptySet() }
 
-    val runSearch = {
+    fun submit(value: String) {
+        if (value.isBlank()) return
+        selectedUrls = emptySet()
+        filter = SearchFilter.All
+        focusManager.clearFocus()
         keyboard?.hide()
-        searchViewModel.search(query)
+        actions.onSearch(value.trim())
+    }
+    fun toggleSelection(url: String) {
+        selectedUrls = if (url in selectedUrls) selectedUrls - url else selectedUrls + url
+    }
+    val filteredSongs = songs.filter { song ->
+        when (filter) {
+            SearchFilter.All -> true
+            SearchFilter.NotDownloaded -> !state.isDownloaded(song.downloadUrl)
+            SearchFilter.Downloaded -> state.isDownloaded(song.downloadUrl)
+        }
     }
 
     Scaffold(
-        containerColor = colors.background,
+        modifier = Modifier.fillMaxSize().testTag("online_search")
+            .nestedScroll(scrollBehavior.nestedScrollConnection),
+        containerColor = colors.surface,
         topBar = {
-            TopAppBar(
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = colors.surface,
-                    titleContentColor = colors.onSurface,
-                    navigationIconContentColor = colors.onSurfaceVariant,
-                    actionIconContentColor = colors.onSurfaceVariant
-                ),
-                navigationIcon = {
-                    if (isSelectionMode) {
-                        IconButton(onClick = { selectedUrls = emptySet() }) {
-                            Icon(Icons.Default.Close, contentDescription = "Закрыть выбор")
-                        }
-                    }
-                },
-                title = {
-                    AnimatedContent(
-                        targetState = isSelectionMode,
-                        transitionSpec = {
-                            fadeIn(animationSpec = tween(220))
-                                .togetherWith(fadeOut(animationSpec = tween(180)))
-                        },
-                        label = "onlineSearchTopBar"
-                    ) { selectionMode ->
-                        if (selectionMode) {
-                            Text(
-                                text = "Выбрано: ${selectedUrls.size}",
-                                fontFamily = font,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        } else {
-                            Column {
-                                Text(
-                                    text = "Поиск",
-                                    fontFamily = font,
-                                    fontWeight = FontWeight.SemiBold,
-                                    maxLines = 1
-                                )
-                                Text(
-                                    text = "Онлайн-треки и скачивание",
-                                    fontFamily = font,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = colors.onSurfaceVariant,
-                                    maxLines = 1
-                                )
+            Column {
+                AnimatedContent(
+                    targetState = selectionMode,
+                    transitionSpec = { fadeIn(tween(180)).togetherWith(fadeOut(tween(100))) },
+                    label = "searchToolbar",
+                ) { selecting ->
+                    if (selecting) {
+                        TopAppBar(
+                            title = { Text("Выбрано: ${selectedUrls.size}", fontFamily = font,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            navigationIcon = {
+                                IconButton(onClick = { selectedUrls = emptySet() }) {
+                                    Icon(Icons.Rounded.Close, "Отменить выбор")
+                                }
+                            },
+                            actions = {
+                                IconButton(onClick = {
+                                    val visibleUrls = filteredSongs.map { it.downloadUrl }.toSet()
+                                    selectedUrls = if (selectedUrls.containsAll(visibleUrls)) emptySet() else visibleUrls
+                                }) { Icon(Icons.Rounded.SelectAll, "Выбрать все") }
+                                FilledTonalIconButton(
+                                    enabled = songs.any { it.downloadUrl in selectedUrls &&
+                                        !state.isDownloaded(it.downloadUrl) && !state.isDownloading(it.downloadUrl) },
+                                    onClick = {
+                                        songs.filter { it.downloadUrl in selectedUrls &&
+                                            !state.isDownloaded(it.downloadUrl) && !state.isDownloading(it.downloadUrl) }
+                                            .forEach(actions.onDownload)
+                                        selectedUrls = emptySet()
+                                    },
+                                    modifier = Modifier.padding(end = 12.dp),
+                                ) { Icon(Icons.Rounded.Download, "Скачать выбранные") }
+                            },
+                            colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.secondaryContainer),
+                        )
+                    } else {
+                        val title: @Composable () -> Unit = { Text("Поиск", fontFamily = font) }
+                        val toolbarActions: @Composable RowScope.() -> Unit = {
+                            IconButton(onClick = {
+                                focusManager.clearFocus()
+                                keyboard?.hide()
+                                showDownloads = true
+                            }, modifier = Modifier.padding(end = 8.dp)) {
+                                BadgedBox(badge = {
+                                    if (activeDownloads > 0) Badge { Text(activeDownloads.toString()) }
+                                }) { Icon(Icons.Rounded.DownloadForOffline, "Загрузки") }
                             }
                         }
-                    }
-                },
-                actions = {
-                    if (isSelectionMode && selectedUrls.isNotEmpty()) {
-                        FilledIconButton(
-                            onClick = {
-                                val urls = selectedUrls.toSet()
-                                val currentState = searchState
-                                if (currentState is OnlineSearchState.Success) {
-                                    currentState.songs
-                                        .filter { it.downloadUrl in urls }
-                                        .forEach { searchViewModel.startDownload(it) }
-                                }
-                                selectedUrls = emptySet()
-                            },
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = colors.primaryContainer,
-                                contentColor = colors.onPrimaryContainer
-                            ),
-                            modifier = Modifier.padding(end = 12.dp)
-                        ) {
-                            Icon(Icons.Default.Download, contentDescription = "Скачать выбранное")
+                        if (compactHeight || imeVisible) {
+                            TopAppBar(title = title, actions = toolbarActions,
+                                colors = TopAppBarDefaults.topAppBarColors(containerColor = colors.surface))
+                        } else {
+                            LargeTopAppBar(title = title, actions = toolbarActions,
+                                scrollBehavior = scrollBehavior,
+                                colors = TopAppBarDefaults.largeTopAppBarColors(
+                                    containerColor = colors.surface, scrolledContainerColor = colors.surface))
                         }
                     }
                 }
-            )
-        }
-
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-        ) {
-            SearchInputSurface(
-                query = query,
-                onQueryChange = { query = it },
-                onClearQuery = { query = "" },
-                onSearch = runSearch,
-                focusRequester = focusRequester
-            )
-
-            AnimatedContent(
-                targetState = searchState,
-                transitionSpec = {
-                    fadeIn(animationSpec = tween(260))
-                        .togetherWith(fadeOut(animationSpec = tween(180)))
-                },
-                label = "onlineSearchState"
-            ) { state ->
-                when (state) {
-                    OnlineSearchState.Idle -> OnlineIdleHint(
-                        history = searchHistory,
-                        onChipClick = {
-                            query = it
-                            searchViewModel.search(it)
-                        },
-                        onRemoveHistory = { searchViewModel.removeHistoryQuery(it) },
-                        onClearHistory = { searchViewModel.clearSearchHistory() }
-                    )
-
-                    OnlineSearchState.Loading -> OnlineLoadingState()
-
-                    is OnlineSearchState.Empty -> EmptySearchState(query = state.query)
-
-                    is OnlineSearchState.Error -> ErrorSearchState(
-                        message = state.message,
-                        onRetry = { searchViewModel.search(query) }
-                    )
-
-                    is OnlineSearchState.Success -> LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 16.dp,
-                            end = 16.dp,
-                            top = 8.dp,
-                            bottom = LocalBottomChromeHeight.current + BottomChromeExtraSpace
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(0.dp)
-                    ) {
-                        item {
-                            SearchResultsSummary(
-                                songCount = state.songs.size,
-                                albumCount = state.albums.size,
-                                isSelectionMode = isSelectionMode,
-                                selectionCount = selectedUrls.size
-                            )
-                        }
-
-                        if (state.albums.isNotEmpty()) {
-                            item {
-                                SearchSectionLabel(
-                                    icon = {
-                                        Icon(
-                                            imageVector = Icons.Rounded.Album,
-                                            contentDescription = null,
-                                            tint = colors.primary
-                                        )
-                                    },
-                                    title = "Альбомы",
-                                    subtitle = "Откройте альбом, чтобы увидеть все треки"
-                                )
-                            }
-
-                            item {
-                                AlbumResultsCarousel(
-                                    albums = state.albums,
-                                    onAlbumClick = {
-                                        keyboard?.hide()
-                                        searchViewModel.openAlbum(it)
-                                    }
-                                )
-                            }
-                        }
-
-                        if (state.songs.isNotEmpty()) {
-                            item {
-                                SearchSectionLabel(
-                                    icon = {
-                                        Icon(
-                                            imageVector = Icons.Rounded.LibraryMusic,
-                                            contentDescription = null,
-                                            tint = colors.primary
-                                        )
-                                    },
-                                    title = "Треки",
-                                    subtitle = "Потоковое воспроизведение, загрузка и добавление в библиотеку"
-                                )
-                            }
-                        }
-
-                        itemsIndexed(state.songs, key = { _, item -> item.downloadUrl }) { index, song ->
-                            val dlState = downloadStates[song.downloadUrl] ?: DownloadState.Idle
-                            val readySong = readySongs[song.downloadUrl]
-                            val isAdded = locallyAdded[song.downloadUrl] == true ||
-                                (readySong != null && addedSongs.any { it.uri == readySong.uri })
-                            val isSelected = song.downloadUrl in selectedUrls
-
-                            OnlineSongCard(
-                                song = song,
-                                index = index,
-                                dlState = dlState,
-                                isAdded = isAdded,
-                                isSelected = isSelected,
-                                isSelectionMode = isSelectionMode,
-                                accentColor = colors.primary,
-                                onDownload = { searchViewModel.startDownload(song) },
-                                onAdd = { markSongAdded(song) },
-                                onPlay = {
-                                    if (isSelectionMode) {
-                                        selectedUrls = if (isSelected) {
-                                            selectedUrls - song.downloadUrl
-                                        } else {
-                                            selectedUrls + song.downloadUrl
-                                        }
-                                    } else {
-                                        playOnlineSong(song)
+                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    SearchBar(
+                        modifier = Modifier.widthIn(max = 720.dp).fillMaxWidth()
+                            .padding(horizontal = 16.dp).padding(bottom = 12.dp),
+                        inputField = {
+                            SearchBarDefaults.InputField(
+                                query = state.query,
+                                onQueryChange = { value ->
+                                    if (value.isEmpty()) actions.onClearQuery() else actions.onQueryChange(value)
+                                },
+                                onSearch = { submit(it) },
+                                expanded = false,
+                                onExpandedChange = {},
+                                modifier = Modifier.focusRequester(focusRequester).testTag("online_query"),
+                                placeholder = { Text("Трек или исполнитель", fontFamily = font,
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingIcon = {
+                                    IconButton(onClick = { submit(state.query) }, enabled = state.query.isNotBlank()) {
+                                        Icon(Icons.Rounded.Search, "Найти музыку")
                                     }
                                 },
-                                onLongClick = {
-                                    selectedUrls = selectedUrls + song.downloadUrl
-                                }
+                                trailingIcon = {
+                                    if (state.query.isNotEmpty()) {
+                                        IconButton(onClick = {
+                                            selectedUrls = emptySet()
+                                            actions.onClearQuery()
+                                            focusRequester.requestFocus()
+                                        }) { Icon(Icons.Rounded.Close, "Очистить запрос") }
+                                    }
+                                },
                             )
-                        }
-                    }
+                        },
+                        expanded = false,
+                        onExpandedChange = {},
+                        windowInsets = WindowInsets(0, 0, 0, 0),
+                        colors = SearchBarDefaults.colors(containerColor = colors.surfaceContainerHigh),
+                        tonalElevation = 0.dp,
+                        shadowElevation = 0.dp,
+                    ) {}
                 }
             }
-        }
-    }
-
-    if (albumSheetState !is OnlineAlbumSheetState.Hidden) {
-        ModalBottomSheet(
-            onDismissRequest = { searchViewModel.closeAlbum() },
-            dragHandle = { BottomSheetDefaults.DragHandle(color = colors.outlineVariant) },
-            sheetState = albumSheetUiState,
-            containerColor = colors.surface
-        ) {
-            AlbumDetailSheet(
-                state = albumSheetState,
-                downloadStates = downloadStates,
-                readySongs = readySongs,
-                addedSongs = addedSongs,
-                locallyAdded = locallyAdded,
-                onRetry = { searchViewModel.retryAlbum() },
-                onDownload = { searchViewModel.startDownload(it) },
-                onAdd = { markSongAdded(it) },
-                onPlay = { song, albumName -> playOnlineSong(song, albumName) }
-            )
-        }
-    }
-}
-
-@Composable
-private fun SearchInputSurface(
-    query: String,
-    onQueryChange: (String) -> Unit,
-    onClearQuery: () -> Unit,
-    onSearch: () -> Unit,
-    focusRequester: FocusRequester
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    // M3 full-width search field (YouTube Music / Google style)
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 10.dp),
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surfaceContainerHigh,
-        shadowElevation = 2.dp,
-        tonalElevation = 3.dp
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onSearch) {
-                Icon(
-                    imageVector = Icons.Default.Search,
-                    contentDescription = "Искать",
-                    tint = colors.onSurfaceVariant
-                )
-            }
-
-            TextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier
-                    .weight(1f)
-                    .focusRequester(focusRequester),
-                singleLine = true,
-                placeholder = {
-                    Text(
-                        text = "Трек, артист или альбом",
-                        fontFamily = font,
-                        color = colors.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+        },
+    ) { padding ->
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
+            .imePadding(), contentAlignment = Alignment.TopCenter) {
+            AnimatedContent(
+                targetState = state.result,
+                modifier = Modifier.widthIn(max = 720.dp).fillMaxSize(),
+                contentKey = { it::class },
+                transitionSpec = {
+                    (fadeIn(tween(220, delayMillis = 70)) + slideInVertically(tween(260)) { it / 40 })
+                        .togetherWith(fadeOut(tween(100)))
                 },
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    fontFamily = font,
-                    color = colors.onSurface
-                ),
-                colors = TextFieldDefaults.colors(
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    disabledIndicatorColor = Color.Transparent,
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    disabledContainerColor = Color.Transparent,
-                    cursorColor = colors.primary
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                keyboardActions = KeyboardActions(onSearch = { onSearch() })
-            )
-
-            if (query.isNotEmpty()) {
-                IconButton(onClick = onClearQuery) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = "Очистить",
-                        tint = colors.onSurfaceVariant
+                label = "searchContent",
+            ) { result ->
+                val contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp,
+                    bottom = if (imeVisible) 24.dp else bottomSpace + 16.dp)
+                when (result) {
+                    OnlineSearchState.Idle -> SearchLanding(
+                        query = state.query, history = state.history, contentPadding = contentPadding,
+                        onSearch = ::submit, onFocusSearch = { focusRequester.requestFocus() },
+                        onRemove = actions.onRemoveHistory, onClearHistory = { confirmClearHistory = true },
                     )
-                }
-            } else {
-                Spacer(Modifier.width(8.dp))
-            }
-        }
-    }
-}
-
-
-@Composable
-private fun SearchResultsSummary(
-    songCount: Int,
-    albumCount: Int,
-    isSelectionMode: Boolean,
-    selectionCount: Int
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
-        border = BorderStroke(1.dp, colors.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column {
-                Text(
-                    text = "${albumCount + songCount} результатов",
-                    fontFamily = font,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.onSurface
-                )
-                Text(
-                    text = if (isSelectionMode) {
-                        "Выбрано для скачивания: $selectionCount"
-                    } else {
-                        "Альбомов: $albumCount, треков: $songCount"
-                    },
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant
-                )
-            }
-
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = if (isSelectionMode) colors.primaryContainer else colors.secondaryContainer
-            ) {
-                Text(
-                    text = if (isSelectionMode) "$selectionCount" else "$albumCount/$songCount",
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                    fontFamily = font,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (isSelectionMode) colors.onPrimaryContainer else colors.onSecondaryContainer
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun SearchSectionLabel(
-    icon: @Composable () -> Unit,
-    title: String,
-    subtitle: String
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        Surface(
-            modifier = Modifier.size(42.dp),
-            shape = RoundedCornerShape(14.dp),
-            color = colors.secondaryContainer
-        ) {
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                icon()
-            }
-        }
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                fontFamily = font,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.onSurface
-            )
-            Text(
-                text = subtitle,
-                fontFamily = font,
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun AlbumResultsCarousel(
-    albums: List<OnlineAlbumSummary>,
-    onAlbumClick: (OnlineAlbumSummary) -> Unit
-) {
-    LazyRow(
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(end = 4.dp)
-    ) {
-        items(albums, key = { it.albumUrl }) { album ->
-            AlbumPreviewCard(
-                album = album,
-                onClick = { onAlbumClick(album) }
-            )
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun AlbumPreviewCard(
-    album: OnlineAlbumSummary,
-    onClick: () -> Unit
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Card(
-        modifier = Modifier
-            .width(220.dp)
-            .combinedClickable(onClick = onClick, onLongClick = onClick),
-        shape = RoundedCornerShape(26.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
-        border = BorderStroke(1.dp, colors.outlineVariant),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp)
-        ) {
-            Surface(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(148.dp),
-                shape = RoundedCornerShape(20.dp),
-                color = colors.surfaceContainerHigh
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (album.coverUrl.isNotBlank()) {
-                        AsyncImage(
-                            model = album.coverUrl,
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Rounded.Album,
-                            contentDescription = null,
-                            tint = colors.onSurfaceVariant,
-                            modifier = Modifier.size(42.dp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                text = album.title.ifBlank { "Альбом" },
-                fontFamily = font,
-                fontWeight = FontWeight.SemiBold,
-                color = colors.onSurface,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            if (album.artist.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = album.artist,
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            if (album.subtitle.isNotBlank() || album.badge.isNotBlank()) {
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (album.badge.isNotBlank()) {
-                        MetadataPill(text = album.badge)
-                    }
-                    if (album.subtitle.isNotBlank()) {
-                        MetadataPill(text = album.subtitle)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AlbumDetailSheet(
-    state: OnlineAlbumSheetState,
-    downloadStates: Map<String, DownloadState>,
-    readySongs: Map<String, Song>,
-    addedSongs: List<Song>,
-    locallyAdded: Map<String, Boolean>,
-    onRetry: () -> Unit,
-    onDownload: (OnlineSong) -> Unit,
-    onAdd: (OnlineSong) -> Unit,
-    onPlay: (OnlineSong, String) -> Unit
-) {
-    val album = when (state) {
-        OnlineAlbumSheetState.Hidden -> return
-        is OnlineAlbumSheetState.Loading -> state.album
-        is OnlineAlbumSheetState.Error -> state.album
-        is OnlineAlbumSheetState.Success -> state.album
-    }
-    val coverUrl = when (state) {
-        is OnlineAlbumSheetState.Success -> state.detail.coverUrl.ifBlank { album.coverUrl }
-        else -> album.coverUrl
-    }
-
-    Box(modifier = Modifier.fillMaxWidth()) {
-        OnlineAlbumBackdrop(coverUrl = coverUrl)
-
-    when (state) {
-        OnlineAlbumSheetState.Hidden -> Unit
-
-        is OnlineAlbumSheetState.Loading -> {
-            AlbumSheetStatus(
-                album = state.album,
-                title = "Загружаем альбом",
-                subtitle = "Получаем треки и структуру альбома..."
-            )
-        }
-
-        is OnlineAlbumSheetState.Error -> {
-            AlbumSheetStatus(
-                album = state.album,
-                title = "Не удалось открыть альбом",
-                subtitle = state.message,
-                action = {
-                    Button(onClick = onRetry) {
-                        Text("Повторить")
-                    }
-                }
-            )
-        }
-
-        is OnlineAlbumSheetState.Success -> {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 40.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                item {
-                    AlbumDetailHeader(
-                        album = state.album,
-                        detail = state.detail
+                    OnlineSearchState.Loading -> SearchLoading(contentPadding)
+                    is OnlineSearchState.Empty -> SearchMessage(
+                        icon = Icons.Rounded.SearchOff,
+                        title = "Пока ничего не нашлось",
+                        message = "По запросу «${result.query}» нет доступных треков. Попробуйте уточнить название или исполнителя.",
+                        contentPadding = contentPadding, actionLabel = "Изменить запрос",
+                        onAction = { focusRequester.requestFocus(); keyboard?.show() },
                     )
-                }
-
-                state.detail.sections.forEachIndexed { sectionIndex, section ->
-                    item {
-                        OnlineAlbumSectionHeader(
-                            title = section.title.ifBlank { "Треки" },
-                            subtitle = section.subtitle.ifBlank { "${section.tracks.size} трек(ов)" }
-                        )
-                    }
-
-                    itemsIndexed(
-                        section.tracks,
-                        key = { _, song -> "${sectionIndex}_${song.downloadUrl}" }
-                    ) { index, song ->
-                        val dlState = downloadStates[song.downloadUrl] ?: DownloadState.Idle
-                        val readySong = readySongs[song.downloadUrl]
-                        val isAdded = locallyAdded[song.downloadUrl] == true ||
-                            (readySong != null && addedSongs.any { it.uri == readySong.uri })
-
-                        OnlineSongCard(
-                            song = song,
-                            index = index,
-                            dlState = dlState,
-                            isAdded = isAdded,
-                            accentColor = MaterialTheme.colorScheme.primary,
-                            onDownload = { onDownload(song) },
-                            onAdd = { onAdd(song) },
-                            onPlay = { onPlay(song, state.detail.title) }
-                        )
-                    }
-                }
-            }
-        }
-    }
-    }
-}
-
-@Composable
-private fun AlbumSheetStatus(
-    album: OnlineAlbumSummary,
-    title: String,
-    subtitle: String,
-    action: @Composable (() -> Unit)? = null
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 16.dp),
-        shape = RoundedCornerShape(34.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface.copy(alpha = 0.72f))
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            AlbumCover(
-                coverUrl = album.coverUrl,
-                modifier = Modifier.size(186.dp)
-            )
-            Spacer(Modifier.height(18.dp))
-            Text(
-                text = album.title.ifBlank { "Альбом" },
-                fontFamily = font,
-                fontWeight = FontWeight.Bold,
-                color = colors.onSurface,
-                textAlign = TextAlign.Center,
-                fontSize = 24.sp
-            )
-            if (album.artist.isNotBlank()) {
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = album.artist,
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-            Spacer(Modifier.height(20.dp))
-            if (action == null) {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(16.dp))
-            }
-            Text(
-                text = title,
-                fontFamily = font,
-                fontWeight = FontWeight.Medium,
-                color = colors.onSurface
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = subtitle,
-                fontFamily = font,
-                style = MaterialTheme.typography.bodySmall,
-                color = colors.onSurfaceVariant,
-                textAlign = TextAlign.Center
-            )
-            if (action != null) {
-                Spacer(Modifier.height(16.dp))
-                action()
-            }
-        }
-    }
-}
-
-@Composable
-private fun AlbumDetailHeader(
-    album: OnlineAlbumSummary,
-    detail: OnlineAlbumDetail
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-    val coverUrl = detail.coverUrl.ifBlank { album.coverUrl }
-    val trackCount = detail.sections.sumOf { it.tracks.size }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(34.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(34.dp))
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            colors.primaryContainer.copy(alpha = 0.32f),
-                            colors.secondaryContainer.copy(alpha = 0.18f),
-                            colors.surface.copy(alpha = 0.86f),
-                            colors.surface.copy(alpha = 0.97f)
-                        )
+                    is OnlineSearchState.Error -> SearchMessage(
+                        icon = Icons.Rounded.CloudOff, title = "Не удалось выполнить поиск",
+                        message = result.message, contentPadding = contentPadding,
+                        actionLabel = "Попробовать снова", onAction = { submit(state.submittedQuery) },
                     )
-                )
-                .padding(horizontal = 20.dp, vertical = 22.dp)
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                AlbumCover(
-                    coverUrl = coverUrl,
-                    modifier = Modifier.size(204.dp)
-                )
-                Spacer(Modifier.height(20.dp))
-                Text(
-                    text = detail.title.ifBlank { album.title.ifBlank { "Альбом" } },
-                    fontFamily = font,
-                    fontWeight = FontWeight.Bold,
-                    color = colors.onSurface,
-                    textAlign = TextAlign.Center,
-                    fontSize = 27.sp
-                )
-                if (detail.artist.isNotBlank() || album.artist.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = detail.artist.ifBlank { album.artist },
-                        fontFamily = font,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                }
-                Spacer(Modifier.height(10.dp))
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    userScrollEnabled = detail.chips.size > 4
-                ) {
-                    item { MetadataPill(text = "$trackCount трек(ов)") }
-                    if (album.badge.isNotBlank()) {
-                        item { MetadataPill(text = album.badge) }
-                    }
-                    items(detail.chips, key = { it }) { chip ->
-                        MetadataPill(text = chip)
-                    }
-                }
-                if (detail.description.isNotBlank()) {
-                    Spacer(Modifier.height(16.dp))
-                    Text(
-                        text = detail.description,
-                        fontFamily = font,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant,
-                        textAlign = TextAlign.Center
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun OnlineAlbumBackdrop(
-    coverUrl: String
-) {
-    val colors = MaterialTheme.colorScheme
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(350.dp)
-            .clip(RoundedCornerShape(bottomStart = 36.dp, bottomEnd = 36.dp))
-    ) {
-        if (coverUrl.isNotBlank()) {
-            AsyncImage(
-                model = coverUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-        }
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        listOf(
-                            colors.primary.copy(alpha = 0.20f),
-                            colors.secondary.copy(alpha = 0.10f),
-                            colors.surface.copy(alpha = 0.84f),
-                            colors.surface
-                        )
-                    )
-                )
-        )
-    }
-}
-
-@Composable
-private fun OnlineAlbumSectionHeader(
-    title: String,
-    subtitle: String
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(
-            text = title,
-            fontFamily = font,
-            fontWeight = FontWeight.SemiBold,
-            color = colors.onSurface
-        )
-        MetadataPill(text = subtitle)
-    }
-}
-
-@Composable
-private fun AlbumCover(
-    coverUrl: String,
-    modifier: Modifier = Modifier
-) {
-    val colors = MaterialTheme.colorScheme
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(28.dp),
-        color = colors.surfaceContainerHigh
-    ) {
-        Box(
-            modifier = Modifier.fillMaxSize(),
-            contentAlignment = Alignment.Center
-        ) {
-            if (coverUrl.isNotBlank()) {
-                AsyncImage(
-                    model = coverUrl,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Icon(
-                    imageVector = Icons.Rounded.Album,
-                    contentDescription = null,
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.size(36.dp)
-                )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun OnlineSongCard(
-    song: OnlineSong,
-    index: Int,
-    dlState: DownloadState,
-    isAdded: Boolean,
-    isSelected: Boolean = false,
-    isSelectionMode: Boolean = false,
-    accentColor: Color,
-    onDownload: () -> Unit,
-    onAdd: () -> Unit,
-    onPlay: () -> Unit,
-    onLongClick: () -> Unit = {}
-) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-    val isDownloading = dlState is DownloadState.Pending || dlState is DownloadState.Progress
-    val isDone = isAdded || dlState is DownloadState.Done
-    val isError = dlState is DownloadState.Err
-
-    val rowBg = when {
-        isSelected -> colors.secondaryContainer.copy(alpha = 0.55f)
-        isDownloading -> colors.primaryContainer.copy(alpha = 0.35f)
-        isDone -> colors.tertiaryContainer.copy(alpha = 0.28f)
-        isError -> colors.errorContainer.copy(alpha = 0.35f)
-        else -> Color.Transparent
-    }
-
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(rowBg, RoundedCornerShape(16.dp))
-                .combinedClickable(
-                    onClick = {
-                        if (isSelectionMode) onLongClick() else onPlay()
-                    },
-                    onLongClick = onLongClick
-                )
-                .padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Cover
-            Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(colors.surfaceContainerHighest),
-                contentAlignment = Alignment.Center
-            ) {
-                if (song.coverUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = song.coverUrl,
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Icon(
-                        Icons.Rounded.MusicNote,
-                        contentDescription = null,
-                        tint = colors.onSurfaceVariant,
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-            }
-
-            Spacer(Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = song.title.ifBlank { "Без названия" },
-                    fontFamily = font,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = buildString {
-                        append(song.artist.ifBlank { "Неизвестный" })
-                        if (song.duration.isNotBlank()) {
-                            append(" • ")
-                            append(song.duration)
+                    is OnlineSearchState.Success -> {
+                        // Use the target result in AnimatedContent; outgoing content keeps its own data.
+                        val visibleSongs = result.songs.filter { song ->
+                            when (filter) {
+                                SearchFilter.All -> true
+                                SearchFilter.NotDownloaded -> !state.isDownloaded(song.downloadUrl)
+                                SearchFilter.Downloaded -> state.isDownloaded(song.downloadUrl)
+                            }
                         }
-                    },
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
-            Spacer(Modifier.width(8.dp))
-
-            when {
-                isSelectionMode -> {
-                    Icon(
-                        imageVector = if (isSelected) Icons.Default.Check else Icons.Default.CheckBoxOutlineBlank,
-                        contentDescription = null,
-                        tint = if (isSelected) colors.primary else colors.outline,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                isDownloading -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(22.dp),
-                        strokeWidth = 2.dp,
-                        color = colors.primary
-                    )
-                }
-                isDone -> {
-                    Icon(
-                        imageVector = Icons.Default.Check,
-                        contentDescription = "В библиотеке",
-                        tint = colors.primary,
-                        modifier = Modifier.size(22.dp)
-                    )
-                }
-                isError -> {
-                    IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.Default.Refresh,
-                            contentDescription = "Повторить",
-                            tint = colors.error,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        LazyColumn(state = listState, contentPadding = contentPadding,
+                            verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                            item(key = "summary") {
+                                Column(Modifier.padding(horizontal = 4.dp, vertical = 8.dp)) {
+                                    Text("Результаты", style = MaterialTheme.typography.headlineSmall, fontFamily = font)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text("${onlineTrackCount(result.songs.size)} по запросу «${state.submittedQuery}»",
+                                        style = MaterialTheme.typography.bodyMedium, fontFamily = font,
+                                        color = colors.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            if (result.songs.isNotEmpty()) {
+                                item(key = "filters") {
+                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        items(SearchFilter.entries) { item ->
+                                            FilterChip(selected = filter == item,
+                                                onClick = { filter = item; selectedUrls = emptySet() },
+                                                label = { Text(item.label, fontFamily = font) },
+                                                leadingIcon = if (filter == item) {
+                                                    { Icon(Icons.Rounded.Check, null, Modifier.size(18.dp)) }
+                                                } else null)
+                                        }
+                                    }
+                                }
+                            }
+                            if (result.albums.isNotEmpty() && filter == SearchFilter.All) {
+                                item(key = "albums") {
+                                    OnlineAlbumResults(result.albums, actions.onOpenAlbum)
+                                }
+                            }
+                            items(visibleSongs, key = { it.downloadUrl }, contentType = { "track" }) { song ->
+                                OnlineTrackCard(
+                                    song = song, download = state.downloads[song.downloadUrl] ?: DownloadState.Idle,
+                                    isSaved = song.downloadUrl in state.savedUrls,
+                                    isCurrent = state.currentUrl == song.downloadUrl, isPlaying = state.isPlaying,
+                                    selectionMode = selectionMode, selected = song.downloadUrl in selectedUrls,
+                                    onClick = { if (selectionMode) toggleSelection(song.downloadUrl) else actions.onPlay(song) },
+                                    onLongClick = { toggleSelection(song.downloadUrl) },
+                                    onDownload = { actions.onDownload(song) }, onAdd = { actions.onAdd(song) },
+                                )
+                            }
+                            if (visibleSongs.isEmpty() && filter != SearchFilter.All) {
+                                item(key = "empty_filter") {
+                                    SearchEmptyFilter(downloaded = filter == SearchFilter.Downloaded,
+                                        onShowAll = { filter = SearchFilter.All })
+                                }
+                            }
+                            if (visibleSongs.isNotEmpty() && !selectionMode) {
+                                item(key = "selection_hint") {
+                                    Text("Удерживайте трек, чтобы выбрать несколько для загрузки",
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
+                                        style = MaterialTheme.typography.bodySmall, fontFamily = font,
+                                        color = colors.onSurfaceVariant)
+                                }
+                            }
+                        }
                     }
                 }
-                else -> {
-                    IconButton(onClick = onDownload, modifier = Modifier.size(36.dp)) {
-                        Icon(
-                            Icons.Default.Download,
-                            contentDescription = "Скачать",
-                            tint = colors.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
+            }
+        }
+    }
+    if (showDownloads) {
+        OnlineDownloadsSheet(state, actions, onDismiss = { showDownloads = false })
+    }
+    if (confirmClearHistory) {
+        AlertDialog(onDismissRequest = { confirmClearHistory = false },
+            icon = { Icon(Icons.Rounded.History, null) },
+            title = { Text("Очистить историю?", fontFamily = font) },
+            text = { Text("Недавние запросы исчезнут. Скачанная музыка останется в медиатеке.", fontFamily = font) },
+            confirmButton = {
+                TextButton(onClick = { actions.onClearHistory(); confirmClearHistory = false }) {
+                    Text("Очистить", fontFamily = font)
                 }
-            }
-        }
-        HorizontalDivider(
-            modifier = Modifier.padding(start = 76.dp),
-            thickness = 0.5.dp,
-            color = colors.outlineVariant.copy(alpha = 0.28f)
-        )
-    }
-}
-
-
-
-@Composable
-private fun MetadataPill(text: String) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Surface(
-        shape = RoundedCornerShape(10.dp),
-        color = colors.surfaceVariant
-    ) {
-        Text(
-            text = text,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-            fontFamily = font,
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.onSurfaceVariant
-        )
+            }, dismissButton = {
+                TextButton(onClick = { confirmClearHistory = false }) { Text("Отмена", fontFamily = font) }
+            })
     }
 }
 
 @Composable
-private fun OnlineLoadingState() {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-    val composition by rememberLottieComposition(LottieCompositionSpec.RawRes(R.raw.searching))
-    val progress by animateLottieCompositionAsState(
-        composition = composition,
-        iterations = LottieConstants.IterateForever,
-        isPlaying = true,
-        speed = 1f
-    )
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = colors.surface),
-            border = BorderStroke(1.dp, colors.outlineVariant),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 20.dp, vertical = 24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                LottieAnimation(
-                    composition = composition,
-                    progress = { progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(220.dp)
-                )
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    text = "Ищем треки...",
-                    fontFamily = font,
-                    fontWeight = FontWeight.Medium,
-                    color = colors.onSurface
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = "Результаты появятся здесь, как только поиск завершится.",
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptySearchState(query: String) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 28.dp),
-        verticalArrangement = Arrangement.Center,
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Surface(
-            modifier = Modifier.size(80.dp),
-            shape = CircleShape,
-            color = colors.surfaceContainerHighest
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Default.Search,
-                    contentDescription = null,
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.size(36.dp)
-                )
-            }
-        }
-        Spacer(Modifier.height(20.dp))
-        Text(
-            text = "Ничего не найдено",
-            fontFamily = font,
-            fontWeight = FontWeight.Bold,
-            style = MaterialTheme.typography.titleLarge,
-            color = colors.onSurface
-        )
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = if (query.isBlank()) "Попробуйте другой запрос"
-            else "По запросу «$query» результатов нет.\nПроверьте написание или попробуйте другое имя.",
-            fontFamily = font,
-            style = MaterialTheme.typography.bodyMedium,
-            color = colors.onSurfaceVariant,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-
-@Composable
-private fun ErrorSearchState(
-    message: String,
-    onRetry: () -> Unit
+private fun SearchLanding(
+    query: String, history: List<String>, contentPadding: PaddingValues,
+    onSearch: (String) -> Unit, onFocusSearch: () -> Unit,
+    onRemove: (String) -> Unit, onClearHistory: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val font = LocalAppFontFamily.current
-
-    Box(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp),
-            shape = RoundedCornerShape(28.dp),
-            colors = CardDefaults.cardColors(containerColor = colors.surface),
-            border = BorderStroke(1.dp, colors.outlineVariant),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 28.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Surface(
-                    modifier = Modifier.size(72.dp),
-                    shape = CircleShape,
-                    color = colors.errorContainer
-                ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.WifiOff,
-                            contentDescription = null,
-                            tint = colors.onErrorContainer,
-                            modifier = Modifier.size(32.dp)
-                        )
+    val matchingHistory = history.filter { query.isBlank() || it.contains(query.trim(), ignoreCase = true) }
+    LazyColumn(contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxSize()) {
+        item {
+            Surface(color = colors.secondaryContainer, shape = MaterialTheme.shapes.extraLarge,
+                modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                    Surface(color = colors.surface.copy(alpha = 0.65f), shape = MaterialTheme.shapes.large) {
+                        Icon(Icons.Rounded.TravelExplore, null, tint = colors.onSecondaryContainer,
+                            modifier = Modifier.padding(16.dp).size(32.dp))
+                    }
+                    Text(if (query.isBlank()) "Как звучит\nваш день?" else "Найдём вашу музыку",
+                        style = MaterialTheme.typography.headlineMedium, fontFamily = font,
+                        color = colors.onSecondaryContainer)
+                    Text("Найдите любимый трек, включите его сразу или сохраните для прослушивания без сети.",
+                        style = MaterialTheme.typography.bodyLarge, fontFamily = font,
+                        color = colors.onSecondaryContainer)
+                    FilledTonalButton(onClick = { if (query.isBlank()) onFocusSearch() else onSearch(query) },
+                        colors = ButtonDefaults.filledTonalButtonColors(containerColor = colors.surface,
+                            contentColor = colors.onSurface)) {
+                        Icon(Icons.Rounded.Search, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (query.isBlank()) "Найти музыку" else "Искать", fontFamily = font)
                     }
                 }
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    text = "Ошибка соединения",
-                    fontFamily = font,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colors.onSurface
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = message,
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-                Spacer(Modifier.height(24.dp))
-                Button(
-                    onClick = onRetry,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = colors.primary,
-                        contentColor = colors.onPrimary
-                    ),
-                    shape = RoundedCornerShape(16.dp)
-                ) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        text = "Попробовать снова",
-                        fontFamily = font,
-                        fontWeight = FontWeight.SemiBold
-                    )
+            }
+        }
+        if (matchingHistory.isNotEmpty()) {
+            item {
+                Row(Modifier.fillMaxWidth().padding(start = 4.dp, top = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically) {
+                    Text("Недавние запросы", style = MaterialTheme.typography.titleMedium,
+                        fontFamily = font, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onClearHistory) { Text("Очистить", fontFamily = font) }
+                }
+            }
+            items(matchingHistory, key = { it }) { item ->
+                SearchHistoryRow(item, onClick = { onSearch(item) }, onRemove = { onRemove(item) })
+            }
+        } else if (query.isBlank()) {
+            item {
+                Row(Modifier.padding(horizontal = 8.dp, vertical = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Icon(Icons.Rounded.History, null, tint = colors.onSurfaceVariant)
+                    Text("Ваши недавние запросы появятся здесь",
+                        style = MaterialTheme.typography.bodyMedium, fontFamily = font,
+                        color = colors.onSurfaceVariant)
                 }
             }
         }
@@ -1449,170 +488,36 @@ private fun ErrorSearchState(
 }
 
 @Composable
-private fun OnlineIdleHint(
-    history: List<String>,
-    onChipClick: (String) -> Unit,
-    onRemoveHistory: (String) -> Unit,
-    onClearHistory: () -> Unit
-) {
+private fun SearchLoading(contentPadding: PaddingValues) {
     val colors = MaterialTheme.colorScheme
     val font = LocalAppFontFamily.current
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp)
-    ) {
-        // Big title block — M3 expressive
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp, bottom = 4.dp)
-        ) {
-            Text(
-                text = "Что послушаем?",
-                fontFamily = font,
-                fontWeight = FontWeight.Bold,
-                style = MaterialTheme.typography.headlineMedium,
-                color = colors.onBackground
-            )
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = "Ищите треки и артистов онлайн — можно сразу слушать, скачать или добавить в библиотеку.",
-                fontFamily = font,
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.onSurfaceVariant
-            )
-        }
-
-        // Quick tips as tonal cards in a row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            listOf(
-                Icons.Rounded.MusicNote to "Треки",
-                Icons.Rounded.Album to "Альбомы",
-                Icons.Rounded.LibraryMusic to "Скачать"
-            ).forEach { (icon, label) ->
-                Surface(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(20.dp),
-                    color = colors.secondaryContainer.copy(alpha = 0.55f)
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Icon(icon, null, tint = colors.onSecondaryContainer, modifier = Modifier.size(26.dp))
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = label,
-                            fontFamily = font,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = colors.onSecondaryContainer
-                        )
-                    }
-                }
+    LazyColumn(contentPadding = contentPadding, verticalArrangement = Arrangement.spacedBy(12.dp),
+        modifier = Modifier.fillMaxSize()) {
+        item {
+            Column(Modifier.padding(horizontal = 4.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Ищем вашу музыку", style = MaterialTheme.typography.titleLarge, fontFamily = font)
+                Text("Проверяем доступные треки", style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = font, color = colors.onSurfaceVariant)
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
-
-        // Recent searches
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "Недавние",
-                    fontFamily = font,
-                    fontWeight = FontWeight.SemiBold,
-                    style = MaterialTheme.typography.titleMedium,
-                    color = colors.onSurface
-                )
-                if (history.isNotEmpty()) {
-                    TextButton(onClick = onClearHistory) {
-                        Text("Очистить", fontFamily = font)
-                    }
-                }
-            }
-
-            if (history.isEmpty()) {
-                Text(
-                    text = "Здесь появятся ваши последние запросы",
-                    fontFamily = font,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant
-                )
-            } else {
-                // Flow-like chips (wrap via LazyRow is fine)
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(history, key = { it }) { hint ->
-                        HistoryQueryCard(
-                            text = hint,
-                            onClick = { onChipClick(hint) },
-                            onRemove = { onRemoveHistory(hint) }
-                        )
-                    }
-                }
-            }
-        }
+        items(4) { SearchPlaceholderCard() }
     }
 }
 
-
 @Composable
-private fun HistoryQueryCard(
-    text: String,
-    onClick: () -> Unit,
-    onRemove: () -> Unit
-) {
-    val colors = MaterialTheme.colorScheme
+private fun SearchEmptyFilter(downloaded: Boolean, onShowAll: () -> Unit) {
     val font = LocalAppFontFamily.current
-
-    Surface(
-        modifier = Modifier.clickable(onClick = onClick),
-        shape = RoundedCornerShape(50),
-        color = colors.surfaceContainerHighest,
-        tonalElevation = 1.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(start = 14.dp, end = 6.dp, top = 8.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.History,
-                contentDescription = null,
-                tint = colors.primary,
-                modifier = Modifier.size(18.dp)
-            )
-            Text(
-                text = text,
-                fontFamily = font,
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            IconButton(
-                onClick = onRemove,
-                modifier = Modifier.size(28.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Close,
-                    contentDescription = "Удалить",
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.size(16.dp)
-                )
-            }
-        }
+    Column(Modifier.fillMaxWidth().padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Icon(if (downloaded) Icons.Rounded.DownloadForOffline else Icons.Rounded.LibraryMusic,
+            null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+        Text(if (downloaded) "Здесь будут скачанные треки" else "Все найденные треки уже скачаны",
+            style = MaterialTheme.typography.titleMedium, fontFamily = font)
+        Text(if (downloaded) "Сохраните трек кнопкой загрузки рядом с ним."
+            else "Их можно слушать без подключения к сети.",
+            style = MaterialTheme.typography.bodyMedium, fontFamily = font,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        TextButton(onClick = onShowAll) { Text("Показать все", fontFamily = font) }
     }
 }

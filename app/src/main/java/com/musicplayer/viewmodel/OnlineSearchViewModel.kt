@@ -22,11 +22,14 @@ import com.musicplayer.data.Song
 import com.musicplayer.repository.HitmosRepository
 import com.musicplayer.repository.OnlineSearchRepository
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import java.io.File
@@ -37,6 +40,9 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
     private val _searchState = MutableStateFlow<OnlineSearchState>(OnlineSearchState.Idle)
     val searchState: StateFlow<OnlineSearchState> = _searchState.asStateFlow()
 
+    private val _submittedQuery = MutableStateFlow("")
+    val submittedQuery: StateFlow<String> = _submittedQuery.asStateFlow()
+
     private val _albumSheetState = MutableStateFlow<OnlineAlbumSheetState>(OnlineAlbumSheetState.Hidden)
     val albumSheetState: StateFlow<OnlineAlbumSheetState> = _albumSheetState.asStateFlow()
 
@@ -46,6 +52,10 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
     // downloadId -> OnlineSong
     private val _downloadStates = MutableStateFlow<Map<String, DownloadState>>(emptyMap())
     val downloadStates: StateFlow<Map<String, DownloadState>> = _downloadStates.asStateFlow()
+
+    // Keep metadata when the user searches again, so downloads remain accessible.
+    private val _downloadSongs = MutableStateFlow<Map<String, OnlineSong>>(emptyMap())
+    val downloadSongs: StateFlow<Map<String, OnlineSong>> = _downloadSongs.asStateFlow()
 
     // Finished downloads: url -> local Song (ready to add to library)
     private val _readySongs = MutableStateFlow<Map<String, Song>>(emptyMap())
@@ -85,11 +95,11 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
                             setDownloadState(song.downloadUrl, DownloadState.Err("Файл не найден после загрузки"))
                             return@launch
                         }
-                        setDownloadState(song.downloadUrl, DownloadState.Done(file.absolutePath))
                         val localSong = buildLocalSong(context, file, song)
                         if (localSong != null) {
                             kotlinx.coroutines.withContext(Dispatchers.Main) {
                                 _readySongs.value = _readySongs.value + (song.downloadUrl to localSong)
+                                setDownloadState(song.downloadUrl, DownloadState.Done(file.absolutePath))
                             }
                         } else {
                             setDownloadState(song.downloadUrl, DownloadState.Err("Не удалось открыть файл"))
@@ -128,17 +138,21 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
 
     fun search(query: String) {
         val cleanQuery = query.trim()
+        searchJob?.cancel()
+        _submittedQuery.value = cleanQuery
         if (cleanQuery.isBlank()) {
             _searchState.value = OnlineSearchState.Idle
+            _bridgeQuery.value = ""
             return
         }
         rememberSearchQuery(cleanQuery)
-        searchJob?.cancel()
         searchJob = viewModelScope.launch {
             _searchState.value = OnlineSearchState.Loading
             _albumSheetState.value = OnlineAlbumSheetState.Hidden
             try {
                 val payload = OnlineSearchRepository.search(cleanQuery)
+                // Repository fallbacks can swallow cancellation: never publish an old response.
+                coroutineContext.ensureActive()
                 _searchState.value = if (payload.songs.isEmpty() && payload.albums.isEmpty()) {
                     OnlineSearchState.Empty(cleanQuery)
                 } else {
@@ -147,6 +161,8 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
                         albums = payload.albums
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _searchState.value = OnlineSearchState.Error(mapErrorMessage(e))
             }
@@ -166,7 +182,10 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
         albumJob = viewModelScope.launch {
             try {
                 val detail = HitmosRepository.fetchAlbumDetail(album.albumUrl)
+                coroutineContext.ensureActive()
                 _albumSheetState.value = OnlineAlbumSheetState.Success(album, detail)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _albumSheetState.value = OnlineAlbumSheetState.Error(
                     album = album,
@@ -194,30 +213,48 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
     fun startDownload(song: OnlineSong) {
         val ctx = getApplication<Application>()
         if (_downloadStates.value[song.downloadUrl] is DownloadState.Pending ||
-            _downloadStates.value[song.downloadUrl] is DownloadState.Progress
+            _downloadStates.value[song.downloadUrl] is DownloadState.Progress ||
+            _downloadStates.value[song.downloadUrl] is DownloadState.Done
         ) return
 
+        _downloadSongs.value = _downloadSongs.value + (song.downloadUrl to song)
         setDownloadState(song.downloadUrl, DownloadState.Pending)
 
-        val safeFilename = buildFilename(song)
-        val referer = runCatching {
-            val parsed = Uri.parse(song.downloadUrl)
-            "${parsed.scheme ?: "https"}://${parsed.host ?: "eu.hitmoz.com"}/"
-        }.getOrDefault("https://eu.hitmoz.com/")
-        val request = DownloadManager.Request(Uri.parse(song.downloadUrl)).apply {
-            setTitle("${song.artist} – ${song.title}".trim(' ', '–'))
-            setDescription("Загрузка музыки...")
-            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "MusicPlayer/$safeFilename")
-            addRequestHeader("User-Agent", "Mozilla/5.0 (Android 14) AppleWebKit/537.36")
-            addRequestHeader("Referer", referer)
-            setAllowedOverMetered(true)
-            setAllowedOverRoaming(true)
-        }
+        try {
+            val safeFilename = buildFilename(song)
+            val referer = runCatching {
+                val parsed = Uri.parse(song.downloadUrl)
+                "${parsed.scheme ?: "https"}://${parsed.host ?: "eu.hitmoz.com"}/"
+            }.getOrDefault("https://eu.hitmoz.com/")
+            val request = DownloadManager.Request(Uri.parse(song.downloadUrl)).apply {
+                setTitle("${song.artist} – ${song.title}".trim(' ', '–'))
+                setDescription("Загрузка музыки...")
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_MUSIC, "MusicPlayer/$safeFilename")
+                addRequestHeader("User-Agent", "Mozilla/5.0 (Android 14) AppleWebKit/537.36")
+                addRequestHeader("Referer", referer)
+                setAllowedOverMetered(true)
+                setAllowedOverRoaming(true)
+            }
 
-        val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-        val dmId = dm.enqueue(request)
-        pendingDownloads[dmId] = song
+            val dm = ctx.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val dmId = dm.enqueue(request)
+            pendingDownloads[dmId] = song
+        } catch (_: Exception) {
+            setDownloadState(song.downloadUrl, DownloadState.Err("Не удалось начать загрузку. Попробуйте ещё раз."))
+        }
+    }
+
+    fun cancelDownload(url: String) {
+        val id = pendingDownloads.entries.firstOrNull { it.value.downloadUrl == url }?.key ?: return
+        val manager = getApplication<Application>().getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        try {
+            manager.remove(id)
+            pendingDownloads.remove(id)
+            setDownloadState(url, DownloadState.Idle)
+        } catch (_: Exception) {
+            // Keep the real active state when DownloadManager cannot cancel the request.
+        }
     }
 
     private fun pollDownloadProgress() {
@@ -255,7 +292,7 @@ class OnlineSearchViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private fun setDownloadState(url: String, state: DownloadState) {
-        _downloadStates.value = _downloadStates.value + (url to state)
+        _downloadStates.update { it + (url to state) }
     }
 
     fun clearError(url: String) {

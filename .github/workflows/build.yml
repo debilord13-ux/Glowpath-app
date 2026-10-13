@@ -25,8 +25,18 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Test player gestures
+      - name: Test player and search interactions
         run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Upload UI check reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlowPath-ui-checks
+          path: |
+            app/build/reports/tests/testDebugUnitTest/
+            app/build/reports/search-preview/
+          if-no-files-found: ignore
 
       - name: Build signed Release + Debug APK
         env:

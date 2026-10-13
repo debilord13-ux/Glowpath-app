@@ -729,7 +729,8 @@ private fun RootTabsPager(
 
                     else -> OnlineSearchScreen(
                         musicViewModel = viewModel,
-                        searchViewModel = onlineSearchViewModel
+                        searchViewModel = onlineSearchViewModel,
+                        isActive = pagerState.currentPage == page,
                     )
                 }
             }
