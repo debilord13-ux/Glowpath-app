@@ -7,6 +7,7 @@ import android.media.RingtoneManager
 import android.net.Uri
 import android.provider.Settings
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -20,6 +21,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,12 +35,18 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -55,7 +63,6 @@ import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import coil.size.Size as CoilSize
 import com.musicplayer.R
-import com.musicplayer.MiniPlayer
 import com.musicplayer.data.RepeatMode
 import com.musicplayer.data.SongColorCache
 import com.musicplayer.data.toTimeString
@@ -63,17 +70,11 @@ import com.musicplayer.ui.components.*
 import com.musicplayer.ui.components.instrumentIconRes
 import com.musicplayer.ui.theme.*
 import androidx.compose.ui.util.lerp as lerpFloat
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import com.musicplayer.viewmodel.MusicViewModel
 import kotlin.math.absoluteValue
-import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sin
 import kotlin.math.cos
@@ -85,6 +86,7 @@ import com.airbnb.lottie.compose.*
 fun PlayerScreen(
     viewModel: MusicViewModel,
     onBack: () -> Unit,
+    miniPlayerBounds: Rect? = null,
     onLyricsClick: () -> Unit = {},
     onEditLyricsClick: () -> Unit = {}
 ) {
@@ -95,7 +97,7 @@ fun PlayerScreen(
     val song            by viewModel.currentSong.collectAsState()
     val isPlaying       by viewModel.isPlaying.collectAsState()
     val duration        by viewModel.duration.collectAsState()
-    // Позиция тикает 5 раз в секунду. Читаем её ТОЛЬКО в ProgressSection (и в backdrop при сворачивании),
+    // Позиция тикает 5 раз в секунду. Читаем её ТОЛЬКО в ProgressSection,
     // а здесь — лишь булев «порог» (>3с), который меняется раз за трек. Иначе весь плеер
     // (обложки, градиенты, очередь) пересобирался бы на каждый тик.
     val positionPastRestart by remember(viewModel) {
@@ -134,185 +136,169 @@ fun PlayerScreen(
             artworkGradientColors = SongColorCache.getGradientColors(context, uri)
         }
     }
-    // ── Swipe-down to close ───────────────────────────────────────────────────
-    var swipeOffsetY by remember { mutableFloatStateOf(0f) }
-    var isSwipeDragging by remember { mutableStateOf(false) }
-    var isSwipeClosing by remember { mutableStateOf(false) }
     val density = LocalDensity.current
-    val swipeDismissDistance = with(density) { 420.dp.toPx() }  // longer travel for full morph into mini bar
-    val swipeCloseThreshold = with(density) { 140.dp.toPx() }
-    val animatedOffset by animateFloatAsState(
-        targetValue = swipeOffsetY,
-        animationSpec = if (isSwipeDragging) {
-            snap()
-        } else {
-            spring(
-                dampingRatio = 0.86f,
-                stiffness = 380f
-            )
-        },
-        label = "sw"
-    )
-    val swipeProgress = (animatedOffset / swipeDismissDistance).coerceIn(0f, 1f)
-    // Stronger shrink + softer alpha so the panel morphs into the mini-player bar (YouTube Music style)
-    val swipeScale    = lerpFloat(1f, 0.42f, FastOutSlowInEasing.transform(swipeProgress))
-    val swipeAlpha    = (1f - (swipeProgress * 0.92f)).coerceIn(0f, 1f)
-    val swipeCorner   = lerpFloat(0f, 28f,   FastOutSlowInEasing.transform(swipeProgress))
-
-    var showTrackSettings by remember { mutableStateOf(false) }
-
-    // Keep the full-screen artwork stable. The previous pulse animation resized the
-    // image on every frame and made the cover visibly jump while playback progressed.
-    val artScale = 1f
-
     val scope = rememberCoroutineScope()
-    val openProgress = remember { Animatable(0f) }
-    val screenEntryProgress = remember { Animatable(0f) }
+    val expansion = remember { Animatable(0f) }
+    var dragExpansion by remember { mutableStateOf<Float?>(null) }
+    var motionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var isClosing by remember { mutableStateOf(false) }
+    var showTrackSettings by remember { mutableStateOf(false) }
+    var playerBounds by remember { mutableStateOf<Rect?>(null) }
+    val expandedFraction = (dragExpansion ?: expansion.value).coerceIn(0f, 1f)
+    val latestOnBack by rememberUpdatedState(onBack)
+    val velocityTracker = remember { VelocityTracker() }
+    val fallbackHeight = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
+    val dismissDistance = ((playerBounds?.height ?: fallbackHeight) -
+        (miniPlayerBounds?.height ?: with(density) { 72.dp.toPx() })).coerceAtLeast(1f)
+    val latestDismissDistance by rememberUpdatedState(dismissDistance)
+    val closeThreshold = minOf(with(density) { 140.dp.toPx() }, dismissDistance * 0.25f)
+    val latestCloseThreshold by rememberUpdatedState(closeThreshold)
+    val flingThreshold = with(density) { 1000.dp.toPx() }
+    val minimumFlingDistance = with(density) { 24.dp.toPx() }
+
     LaunchedEffect(Unit) {
-        openProgress.snapTo(0f)
-        openProgress.animateTo(
-            targetValue = 1f,
-            animationSpec = spring(
-                dampingRatio = 0.9f,
-                stiffness = 300f
-            )
-        )
-    }
-    LaunchedEffect(Unit) {
-        screenEntryProgress.snapTo(0f)
-        screenEntryProgress.animateTo(
-            targetValue = 1f,
-            animationSpec = spring(
-                dampingRatio = 0.9f,
-                stiffness = 300f
-            )
-        )
-    }
-
-    val activeQueueCount = remember(song!!.id, songs, bridgeQueueUris, settings.sortOrder, settings.shuffleEnabled, queueRevision) {
-        viewModel.buildActiveQueueSnapshot().size
-    }
-    // Continuous morph: show MiniPlayer under during both open and collapse (YT Music style)
-    val collapseBackdropReveal = when {
-        isSwipeClosing || swipeProgress > 0.005f -> {
-            // Collapse / swipe-down: progressively reveal the mini-player under the shrinking full player
-            (swipeProgress * 1.25f).coerceIn(0f, 1f)
-        }
-        else -> {
-            // Open: start with mini visible, fade it out as the full player expands over it
-            (1f - screenEntryProgress.value).coerceIn(0f, 1f)
+        motionJob = scope.launch {
+            expansion.animateTo(1f, tween(380, easing = PlayerSheetEasing))
         }
     }
-    val entryProgress = FastOutSlowInEasing.transform(screenEntryProgress.value.coerceIn(0f, 1f))
-    val playerBackgroundAlpha = ((1f - swipeProgress.coerceIn(0f, 1f)) * entryProgress).coerceIn(0f, 1f)
-    val entryOffsetY = with(density) { lerpFloat(96.dp.toPx(), 0f, entryProgress) }
-    val entryScale = lerpFloat(0.88f, 1f, entryProgress)
-    val entryAlpha = ((entryProgress - 0.02f) / 0.98f).coerceIn(0f, 1f)
-    val entryCorner = lerpFloat(28f, 0f, entryProgress)  // matches MiniPlayer RoundedCornerShape(28.dp)
 
-    suspend fun animateCloseAndExit(startOffset: Float = swipeOffsetY) {
-        if (isSwipeClosing) return
-        isSwipeClosing = true
-        isSwipeDragging = false
-        swipeOffsetY = startOffset.coerceIn(0f, swipeDismissDistance)
-        // Drive fully to the collapsed (mini-player) state so the morph finishes cleanly
-        swipeOffsetY = swipeDismissDistance * 1.05f
-        withTimeoutOrNull(520L) {
-            snapshotFlow { animatedOffset }
-                .first { it >= swipeDismissDistance * 0.97f }
-        }
-        // Tiny settle so the underlaid MiniPlayer is fully opaque before we pop the route
-        kotlinx.coroutines.delay(32)
-        onBack()
-    }
-
-    Box(Modifier.fillMaxSize()) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(
-                    c.surfaceColorAtElevation(NavigationBarDefaults.Elevation)
-                        .copy(alpha = playerBackgroundAlpha)
+    fun settlePlayer(close: Boolean) {
+        // Button, Back and swipe all finish the same animation, exactly once.
+        if (isClosing) return
+        val start = (dragExpansion ?: expansion.value).coerceIn(0f, 1f)
+        motionJob?.cancel()
+        isClosing = close
+        dragExpansion = start
+        motionJob = scope.launch {
+            expansion.snapTo(start)
+            dragExpansion = null
+            if (close) {
+                expansion.animateTo(
+                    0f,
+                    tween(
+                        durationMillis = (300 * start).roundToInt().coerceIn(160, 300),
+                        easing = PlayerSheetEasing
+                    )
                 )
-        )
-
-        AnimatedContent(
-            targetState = artworkGradientColors,
-            transitionSpec = {
-                fadeIn(tween(1000)).togetherWith(fadeOut(tween(1000)))
-            },
-            label = "playerArtworkGradient"
-        ) { colors ->
-            if (colors.size >= 2) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(
-                            Brush.verticalGradient(colors),
-                            alpha = 0.4f * playerBackgroundAlpha
-                        )
+                // The real library and mini-player are already underneath us.
+                // Pop only after reaching zero; no timeout or delayed second handoff.
+                latestOnBack()
+            } else {
+                expansion.animateTo(
+                    1f,
+                    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 400f)
                 )
             }
         }
+    }
 
-        PlayerCollapseBackdrop(
-            title = song!!.title,
-            artist = if (song!!.artist != "<unknown>") song!!.artist else "Неизвестный",
-            albumArtUri = artworkUri,
-            isPlaying = isPlaying,
-            viewModel = viewModel,
-            duration = duration,
-            revealProgress = collapseBackdropReveal,
-            queueCount = activeQueueCount,
-            onPlayPause = { viewModel.togglePlayPause() },
-            onPrevious = { viewModel.playPrevious() },
-            onNext = { viewModel.playNext() },
-            modifier = Modifier.fillMaxSize()
-        )
+    BackHandler(enabled = !showTrackSettings) { settlePlayer(close = true) }
 
-        Box(
-            Modifier.fillMaxSize()
-                .graphicsLayer {
-                    translationY = animatedOffset.coerceAtLeast(0f) + entryOffsetY
-                    scaleX = swipeScale * entryScale
-                    scaleY = swipeScale * entryScale
-                    alpha = swipeAlpha * entryAlpha
-                    transformOrigin = TransformOrigin(0.5f, 1f)
-                    clip = swipeProgress > 0f || entryProgress < 0.999f
-                    shape = RoundedCornerShape(max(swipeCorner, entryCorner).dp)
-                }
-                .pointerInput(showTrackSettings, isSwipeClosing) {
-                    if (!showTrackSettings && !isSwipeClosing) detectVerticalDragGestures(
-                        onDragStart = { isSwipeDragging = true },
-                        onDragEnd    = {
-                            isSwipeDragging = false
-                            if (swipeOffsetY >= swipeCloseThreshold) {
-                                scope.launch { animateCloseAndExit(swipeOffsetY.coerceAtLeast(swipeCloseThreshold)) }
-                            } else {
-                                swipeOffsetY = 0f
-                            }
+    // Gestures belong to the stationary parent so scaling the sheet cannot change
+    // pointer coordinates halfway through a drag.
+    Box(
+        Modifier
+            .fillMaxSize()
+            .onGloballyPositioned { playerBounds = it.boundsInRoot() }
+            .pointerInput(showTrackSettings, isClosing) {
+                if (!showTrackSettings && !isClosing) {
+                    detectVerticalDragGestures(
+                        onDragStart = {
+                            dragExpansion = dragExpansion ?: expansion.value
+                            motionJob?.cancel()
+                            velocityTracker.resetTracking()
                         },
-                        onDragCancel = {
-                            isSwipeDragging = false
-                            swipeOffsetY = 0f
+                        onDragEnd = {
+                            val distance = (1f - (dragExpansion ?: expansion.value)) * latestDismissDistance
+                            val flingDown = distance > minimumFlingDistance &&
+                                velocityTracker.calculateVelocity().y > flingThreshold
+                            settlePlayer(close = distance >= latestCloseThreshold || flingDown)
                         },
-                        onVerticalDrag = { ch, dy ->
-                            ch.consume()
-                            val dragMultiplier = if (dy >= 0f) 0.92f else 1.08f
-                            swipeOffsetY = (swipeOffsetY + dy * dragMultiplier)
-                                .coerceIn(0f, swipeDismissDistance)
+                        onDragCancel = { if (!isClosing) settlePlayer(close = false) },
+                        onVerticalDrag = { change, dy ->
+                            change.consume()
+                            velocityTracker.addPosition(change.uptimeMillis, change.position)
+                            dragExpansion = ((dragExpansion ?: expansion.value) -
+                                dy / latestDismissDistance).coerceIn(0f, 1f)
                         }
                     )
                 }
+            }
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val progress = expandedFraction
+                    val parentOrigin = playerBounds?.topLeft ?: Offset.Zero
+                    val target = miniPlayerBounds?.takeIf { it.width > 0f && it.height > 0f }
+                        ?.translate(-parentOrigin)
+                        ?: Rect(
+                            12.dp.toPx(),
+                            size.height - 100.dp.toPx(),
+                            size.width - 12.dp.toPx(),
+                            size.height - 28.dp.toPx()
+                        )
+                    val sheetWidth = lerpFloat(target.width, size.width, progress)
+                    val sheetHeight = lerpFloat(target.height, size.height, progress)
+                    val scale = (sheetWidth / size.width.coerceAtLeast(1f)).coerceAtLeast(0.01f)
+                    val corner = 28.dp.toPx() * (1f - progress)
+                    translationX = target.left * (1f - progress)
+                    translationY = target.top * (1f - progress)
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0f)
+                    // Uniform scale preserves the artwork; the viewport shrinks to
+                    // the measured mini-player instead of squashing the entire screen.
+                    shape = GenericShape { outlineSize, _ ->
+                        addRoundRect(
+                            RoundRect(
+                                0f, 0f, outlineSize.width, sheetHeight / scale,
+                                CornerRadius(corner / scale)
+                            )
+                        )
+                    }
+                    clip = true
+                    alpha = (progress / 0.35f).coerceIn(0f, 1f)
+                    shadowElevation = 12.dp.toPx() * (1f - progress)
+                }
         ) {
-            Box(Modifier.align(Alignment.TopCenter).padding(top = 10.dp).size(40.dp, 4.dp).clip(RoundedCornerShape(2.dp)).background(c.textDisabled.copy(0.35f + (swipeOffsetY / 180f).coerceIn(0f, 0.65f))))
+            Box(
+                Modifier.fillMaxSize()
+                    .background(c.surfaceColorAtElevation(NavigationBarDefaults.Elevation))
+            )
+            AnimatedContent(
+                targetState = artworkGradientColors,
+                transitionSpec = {
+                    fadeIn(tween(1000)).togetherWith(fadeOut(tween(1000)))
+                },
+                label = "playerArtworkGradient"
+            ) { colors ->
+                if (colors.size >= 2) {
+                    Box(
+                        Modifier.fillMaxSize()
+                            .background(Brush.verticalGradient(colors), alpha = 0.4f)
+                    )
+                }
+            }
 
+            Box(
+                Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+                    .size(40.dp, 4.dp).clip(RoundedCornerShape(2.dp))
+                    .background(c.textDisabled.copy(alpha = 0.35f))
+            )
+            val requestClose: () -> Unit = { settlePlayer(close = true) }
             val doFlipNext: () -> Unit = { viewModel.playNext() }
             val doFlipPrev: () -> Unit = { viewModel.playPrevious() }
-            val requestClose: () -> Unit = { scope.launch { animateCloseAndExit() } }
+            val swipeProgress = 1f - expandedFraction
 
             if (isLandscape) {
-                LandscapePlayerContent(song!!, isPlaying, duration, settings, isFavourite, artScale, viewModel, customArtUri, previousCover, nextCover, requestClose, onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev, swipeProgress, openProgress.value)
+                LandscapePlayerContent(
+                    song!!, isPlaying, duration, settings, isFavourite, 1f,
+                    viewModel, customArtUri, previousCover, nextCover, requestClose,
+                    onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev,
+                    swipeProgress, expandedFraction
+                )
             } else {
                 PlayerQueueHost(
                     viewModel = viewModel,
@@ -320,7 +306,12 @@ fun PlayerScreen(
                     isPlaying = isPlaying,
                     gradientColors = artworkGradientColors
                 ) { queueSlots ->
-                    PortraitPlayerContent(song!!, isPlaying, duration, settings, isFavourite, artScale, viewModel, customArtUri, previousCover, nextCover, requestClose, onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev, swipeProgress, openProgress.value, queueSlots)
+                    PortraitPlayerContent(
+                        song!!, isPlaying, duration, settings, isFavourite, 1f,
+                        viewModel, customArtUri, previousCover, nextCover, requestClose,
+                        onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev,
+                        swipeProgress, expandedFraction, queueSlots
+                    )
                 }
             }
         }
@@ -336,65 +327,7 @@ fun PlayerScreen(
     }
 }
 
-@Composable
-private fun PlayerCollapseBackdrop(
-    title: String,
-    artist: String,
-    albumArtUri: Uri?,
-    isPlaying: Boolean,
-    viewModel: MusicViewModel,
-    duration: Long,
-    revealProgress: Float,
-    queueCount: Int,
-    onPlayPause: () -> Unit,
-    onPrevious: () -> Unit,
-    onNext: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    if (revealProgress <= 0f) return
-
-    // Позицию собираем только пока backdrop реально виден (идёт сворачивание плеера)
-    val position by viewModel.currentPosition.collectAsState()
-    val progress = if (duration > 0L) position.toFloat() / duration.toFloat() else 0f
-
-    val density = LocalDensity.current
-    val revealAlpha = FastOutSlowInEasing.transform(revealProgress).coerceIn(0f, 1f)
-    val contentLift = with(density) { lerpFloat(28.dp.toPx(), 0f, revealAlpha) }
-
-    Box(
-        modifier = modifier
-            .graphicsLayer { alpha = revealAlpha }
-    ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
-                .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 6.dp),
-            contentAlignment = Alignment.BottomCenter
-        ) {
-            MiniPlayer(
-                title = title,
-                artist = artist,
-                albumArtUri = albumArtUri,
-                isPlaying = isPlaying,
-                progress = progress,
-                queueCount = queueCount,
-                onPlayPause = onPlayPause,
-                onPrevious = onPrevious,
-                onNext = onNext,
-                onMoreClick = {},
-                onClick = {},
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .graphicsLayer {
-                        // Stay fully solid once mostly revealed so handoff to real MiniPlayer is invisible
-                        alpha = 0.55f + revealAlpha * 0.45f
-                        translationY = contentLift
-                    }
-            )
-        }
-    }
-}
+private val PlayerSheetEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
 
 @Composable
 private fun PortraitPlayerContent(

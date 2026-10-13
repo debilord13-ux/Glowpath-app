@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
@@ -39,10 +40,15 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -50,6 +56,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.compose.*
 import com.musicplayer.bridge.ExteraGramBridgeCommand
@@ -219,6 +227,14 @@ fun MusicPlayerApp(
 
     val rootRouteOrder = remember { listOf("home", "albums", "online_search") }
     val route = currentRoute?.destination?.route
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(route) {
+        if (route != "root_tabs") {
+            focusManager.clearFocus()
+            keyboard?.hide()
+        }
+    }
     var requestedRootRoute by rememberSaveable { mutableStateOf(rootRouteOrder.first()) }
     var animateRootTabRequest by rememberSaveable { mutableStateOf(false) }
     val pagerState = rememberPagerState(pageCount = { rootRouteOrder.size })
@@ -279,7 +295,7 @@ fun MusicPlayerApp(
 
             ExteraGramBridgeContract.TYPE_OPEN_PLAYER -> {
                 if (currentSong != null) {
-                    navController.navigate("player")
+                    navController.navigate("player") { launchSingleTop = true }
                 } else {
                     navController.navigate("exteragram_bridge")
                 }
@@ -319,7 +335,7 @@ fun MusicPlayerApp(
             ExteraGramBridgeContract.TYPE_PLAY_LIBRARY_QUERY -> {
                 val played = viewModel.playByQuery(command.query)
                 if (played != null) {
-                    navController.navigate("player")
+                    navController.navigate("player") { launchSingleTop = true }
                 } else {
                     onlineSearchViewModel.openFromBridge(command.query)
                     openRootTab("online_search")
@@ -345,7 +361,7 @@ fun MusicPlayerApp(
                         autoPlay = command.autoPlay || command.type == ExteraGramBridgeContract.TYPE_IMPORT_AND_PLAY_URI,
                     ) { song ->
                         if (song != null) {
-                            navController.navigate("player")
+                            navController.navigate("player") { launchSingleTop = true }
                         } else {
                             onlineSearchViewModel.openFromBridge(command.query)
                             navController.navigate("exteragram_bridge")
@@ -360,7 +376,7 @@ fun MusicPlayerApp(
                 val items = parseBridgeBatchItems(command.payload)
                 viewModel.importBridgeBatch(items, mode = command.type) { songs ->
                     if (songs.isNotEmpty() && command.type != ExteraGramBridgeContract.TYPE_IMPORT_BATCH) {
-                        navController.navigate("player")
+                        navController.navigate("player") { launchSingleTop = true }
                     } else {
                         navController.navigate("exteragram_bridge")
                     }
@@ -380,21 +396,23 @@ fun MusicPlayerApp(
     }
 
     // ── Player open mode ──────────────────────────────────────────────────────
-    fun navigateToPlayer() { navController.navigate("player") }
+    fun navigateToPlayer() { navController.navigate("player") { launchSingleTop = true } }
     fun handleSongTap(play: () -> Unit) {
         play()
         if (settings.playerOpenMode == 0) navigateToPlayer()
         // mode 1: just play — mini-player appears, user taps it to open full player
     }
 
-    val showRootTabsBackdrop = route == "player"
-    val showMiniPlayer = currentSong != null &&
-            route == "root_tabs"
-
-    val showBottomNav = route == "root_tabs"
+    val showBottomNav = route == "root_tabs" || route == "player"
+    val showMiniPlayer = currentSong != null && showBottomNav
+    val rootStateHolder = rememberSaveableStateHolder()
+    val rootEntry = remember(currentRoute) {
+        currentRoute?.let { navController.getBackStackEntry("root_tabs") }
+    }
+    var miniPlayerBounds by remember { mutableStateOf<Rect?>(null) }
 
     // Реальная высота нижней панели (мини-плеер + навигация + системный inset).
-    // Обновляем только на корневых вкладках, чтобы отступ не «прыгал» при переходах.
+    // Панель остаётся на месте под большим плеером на протяжении всего перехода.
     val bottomChromeDensity = LocalDensity.current
     var bottomChromeHeightPx by remember { mutableIntStateOf(0) }
     val bottomChromeHeight: Dp = with(bottomChromeDensity) { bottomChromeHeightPx.toDp() }
@@ -404,7 +422,9 @@ fun MusicPlayerApp(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.bgDeep)
     ) {
-        if (showRootTabsBackdrop) {
+        // Keep one library composition underneath navigation. Recreating it on pop
+        // used to expose an empty frame and reset the list/search state.
+        rootEntry?.LocalOwnersProvider(rootStateHolder) {
             RootTabsPager(
                 pagerState = pagerState,
                 rootRouteOrder = rootRouteOrder,
@@ -414,14 +434,16 @@ fun MusicPlayerApp(
                 onAlbumSongClick = { song -> handleSongTap { viewModel.playFromActiveQueue(song) } },
                 onSettingsClick = { navController.navigate("settings") },
                 bottomChromeHeight = bottomChromeHeight,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize().then(
+                    if (route != "root_tabs") Modifier.clearAndSetSemantics {} else Modifier
+                )
             )
         }
 
         NavHost(
             navController    = navController,
             startDestination = "root_tabs",
-            modifier         = Modifier.fillMaxSize()
+            modifier         = Modifier.fillMaxSize().zIndex(1f)
         ) {
             composable(
                 "root_tabs",
@@ -430,17 +452,8 @@ fun MusicPlayerApp(
                 popEnterTransition = { EnterTransition.None },
                 popExitTransition = { ExitTransition.None }
             ) {
-                RootTabsPager(
-                    pagerState = pagerState,
-                    rootRouteOrder = rootRouteOrder,
-                    viewModel = viewModel,
-                    onlineSearchViewModel = onlineSearchViewModel,
-                    onSongClick = { song -> handleSongTap { viewModel.playSong(song) } },
-                    onAlbumSongClick = { song -> handleSongTap { viewModel.playFromActiveQueue(song) } },
-                    onSettingsClick = { navController.navigate("settings") },
-                    bottomChromeHeight = bottomChromeHeight,
-                    modifier = Modifier.fillMaxSize()
-                )
+                // The persistent root content is drawn below this transparent destination.
+                Box(Modifier.fillMaxSize())
             }
 
             composable("home") {
@@ -467,6 +480,7 @@ fun MusicPlayerApp(
             ) {
                 PlayerScreen(
                     viewModel    = viewModel,
+                    miniPlayerBounds = miniPlayerBounds,
                     onBack       = { navController.popBackStack() },
                     onLyricsClick = { navController.navigate("lyrics") },
                     onEditLyricsClick = { navController.navigate("lyrics_editor") }
@@ -526,7 +540,7 @@ fun MusicPlayerApp(
                     onBack = { navController.popBackStack() },
                     onOpenPlayer = {
                         if (currentSong != null) {
-                            navController.navigate("player")
+                            navController.navigate("player") { launchSingleTop = true }
                         }
                     },
                     onOpenSearch = { query ->
@@ -581,8 +595,9 @@ fun MusicPlayerApp(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .onSizeChanged { size ->
-                    if (route == "root_tabs") bottomChromeHeightPx = size.height
+                    if (showBottomNav) bottomChromeHeightPx = size.height
                 }
+                .then(if (route != "root_tabs") Modifier.clearAndSetSemantics {} else Modifier)
                 .navigationBarsPadding()
                 .padding(bottom = 6.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -590,7 +605,8 @@ fun MusicPlayerApp(
         ) {
             AnimatedVisibility(
                 visible  = showMiniPlayer,
-                enter    = AnimationsApplier.miniPlayerEnter(settings.miniPlayerEntryAnim, settings.animParams),
+                enter    = if (route == "player") EnterTransition.None else
+                    AnimationsApplier.miniPlayerEnter(settings.miniPlayerEntryAnim, settings.animParams),
                 exit     = AnimationsApplier.miniPlayerExit(settings.miniPlayerEntryAnim, settings.animParams)
             ) {
                 currentSong?.let { song ->
@@ -605,8 +621,9 @@ fun MusicPlayerApp(
                     onPrevious  = { viewModel.playPrevious() },
                     onNext      = { viewModel.playNext() },
                     onMoreClick = { showMiniActions = true },
-                    onClick     = { navController.navigate("player") },
+                    onClick     = { navController.navigate("player") { launchSingleTop = true } },
                     modifier    = Modifier.padding(horizontal = 12.dp)
+                        .onGloballyPositioned { miniPlayerBounds = it.boundsInRoot() }
                 )
                 }
             }
@@ -637,7 +654,7 @@ fun MusicPlayerApp(
                 repeatMode = settings.repeatMode,
                 onOpenPlayer = {
                     showMiniActions = false
-                    navController.navigate("player")
+                    navController.navigate("player") { launchSingleTop = true }
                 },
                 onOpenQueue = {
                     showMiniActions = false
@@ -659,7 +676,7 @@ fun MusicPlayerApp(
                 onSelectSong = { viewModel.playFromActiveQueue(it) },
                 onOpenPlayer = {
                     showMiniQueue = false
-                    navController.navigate("player")
+                    navController.navigate("player") { launchSingleTop = true }
                 },
                 onDismiss = { showMiniQueue = false }
             )
