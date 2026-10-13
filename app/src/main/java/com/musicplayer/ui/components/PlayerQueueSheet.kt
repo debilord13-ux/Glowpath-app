@@ -95,6 +95,8 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -316,12 +318,19 @@ fun PlayerQueueHost(
     song: Song,
     isPlaying: Boolean,
     gradientColors: List<Color>,
+    onQueueTopChanged: (Float) -> Unit = {},
+    onQueueExpandedChanged: (Boolean) -> Unit = {},
     content: @Composable (PlayerQueueSlots) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberBottomSheetScaffoldState()
+    val queueIsExpanded = sheetState.bottomSheetState.currentValue == SheetValue.Expanded ||
+        sheetState.bottomSheetState.targetValue == SheetValue.Expanded
+    SideEffect {
+        onQueueExpandedChanged(queueIsExpanded)
+    }
     val haptics = LocalHapticFeedback.current
     val songs by viewModel.songs.collectAsState()
     val bridgeUris by viewModel.bridgeQueueUris.collectAsState()
@@ -415,7 +424,11 @@ fun PlayerQueueHost(
             sheetContainerColor = colors.surfaceContainerHigh,
             sheetShadowElevation = 0.dp,
             containerColor = Color.Transparent,
-            sheetDragHandle = { PlayerQueueDragHandle() },
+            sheetDragHandle = {
+                Box(Modifier.onGloballyPositioned { onQueueTopChanged(it.boundsInRoot().top) }) {
+                    PlayerQueueDragHandle()
+                }
+            },
             sheetContent = {
                 Box(modifier = Modifier.heightIn(max = sheetContentMaxHeight)) {
                     PlayerQueueSheetContent(

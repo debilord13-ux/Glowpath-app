@@ -410,6 +410,8 @@ fun MusicPlayerApp(
         currentRoute?.let { navController.getBackStackEntry("root_tabs") }
     }
     var miniPlayerBounds by remember { mutableStateOf<Rect?>(null) }
+    var miniArtworkBounds by remember { mutableStateOf<Rect?>(null) }
+    val playerCustomArts by viewModel.customArtMap.collectAsState()
 
     // Реальная высота нижней панели (мини-плеер + навигация + системный inset).
     // Панель остаётся на месте под большим плеером на протяжении всего перехода.
@@ -481,6 +483,7 @@ fun MusicPlayerApp(
                 PlayerScreen(
                     viewModel    = viewModel,
                     miniPlayerBounds = miniPlayerBounds,
+                    miniArtworkBounds = miniArtworkBounds,
                     onBack       = { navController.popBackStack() },
                     onLyricsClick = { navController.navigate("lyrics") },
                     onEditLyricsClick = { navController.navigate("lyrics_editor") }
@@ -613,7 +616,7 @@ fun MusicPlayerApp(
                     MiniPlayer(
                         title       = song.title,
                         artist      = if (song.artist != "<unknown>") song.artist else "Неизвестный",
-                        albumArtUri = song.albumArtUri,
+                        albumArtUri = playerCustomArts[song.id] ?: song.albumArtUri,
                     isPlaying   = isPlaying,
                     progress    = if (duration > 0) currentPosition.toFloat() / duration.toFloat() else 0f,
                     queueCount  = activeQueue.size,
@@ -622,6 +625,7 @@ fun MusicPlayerApp(
                     onNext      = { viewModel.playNext() },
                     onMoreClick = { showMiniActions = true },
                     onClick     = { navController.navigate("player") { launchSingleTop = true } },
+                    onArtworkBoundsChanged = { miniArtworkBounds = it },
                     modifier    = Modifier.padding(horizontal = 12.dp)
                         .onGloballyPositioned { miniPlayerBounds = it.boundsInRoot() }
                 )
@@ -804,7 +808,8 @@ fun MiniPlayer(
     onNext: () -> Unit,
     onMoreClick: () -> Unit,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onArtworkBoundsChanged: (Rect) -> Unit = {},
 ) {
     val shape = RoundedCornerShape(28.dp)
     val haptic = LocalHapticFeedback.current
@@ -904,6 +909,7 @@ fun MiniPlayer(
                 Surface(
                     modifier = Modifier
                         .size(44.dp)
+                        .onGloballyPositioned { onArtworkBoundsChanged(it.boundsInRoot()) }
                         .graphicsLayer {
                             scaleX = artScale
                             scaleY = artScale

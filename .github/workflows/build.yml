@@ -25,6 +25,9 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Test player gestures
+        run: ./gradlew testDebugUnitTest --stacktrace
+
       - name: Build signed Release + Debug APK
         env:
           GLOWPATH_KEYSTORE_PATH: ${{ github.workspace }}/signing/glowpath.keystore

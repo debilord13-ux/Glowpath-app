@@ -13,10 +13,6 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.border
@@ -34,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Rect
@@ -41,9 +38,14 @@ import androidx.compose.ui.geometry.RoundRect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.rememberGraphicsLayer
+import androidx.compose.ui.graphics.layer.drawLayer
+import androidx.compose.ui.graphics.drawscope.clipPath
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -87,6 +89,7 @@ fun PlayerScreen(
     viewModel: MusicViewModel,
     onBack: () -> Unit,
     miniPlayerBounds: Rect? = null,
+    miniArtworkBounds: Rect? = null,
     onLyricsClick: () -> Unit = {},
     onEditLyricsClick: () -> Unit = {}
 ) {
@@ -137,151 +140,113 @@ fun PlayerScreen(
         }
     }
     val density = LocalDensity.current
+    val artworkCornerPx = with(density) { LocalAppStyle.current.cardCornerRadius.coerceIn(8f, 64f).dp.toPx() }
     val scope = rememberCoroutineScope()
-    val expansion = remember { Animatable(0f) }
-    var dragExpansion by remember { mutableStateOf<Float?>(null) }
-    var motionJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
-    var isClosing by remember { mutableStateOf(false) }
+    val motion = remember(scope) { PlayerCollapseMotion(scope) }
     var showTrackSettings by remember { mutableStateOf(false) }
     var playerBounds by remember { mutableStateOf<Rect?>(null) }
-    val expandedFraction = (dragExpansion ?: expansion.value).coerceIn(0f, 1f)
+    var artworkBounds by remember { mutableStateOf<Rect?>(null) }
+    var lyricsBounds by remember { mutableStateOf<Rect?>(null) }
+    var queueTop by remember { mutableFloatStateOf(Float.POSITIVE_INFINITY) }
+    var queueExpanded by remember { mutableStateOf(false) }
+    val artworkLayer = rememberGraphicsLayer()
+    val expandedFraction = motion.fraction
     val latestOnBack by rememberUpdatedState(onBack)
-    val velocityTracker = remember { VelocityTracker() }
     val fallbackHeight = with(density) { LocalConfiguration.current.screenHeightDp.dp.toPx() }
-    val dismissDistance = ((playerBounds?.height ?: fallbackHeight) -
-        (miniPlayerBounds?.height ?: with(density) { 72.dp.toPx() })).coerceAtLeast(1f)
-    val latestDismissDistance by rememberUpdatedState(dismissDistance)
-    val closeThreshold = minOf(with(density) { 140.dp.toPx() }, dismissDistance * 0.25f)
-    val latestCloseThreshold by rememberUpdatedState(closeThreshold)
-    val flingThreshold = with(density) { 1000.dp.toPx() }
-    val minimumFlingDistance = with(density) { 24.dp.toPx() }
+    val parentOrigin = playerBounds?.topLeft ?: Offset.Zero
+    val dismissDistance = ((miniPlayerBounds?.top?.minus(parentOrigin.y))
+        ?: (playerBounds?.height ?: fallbackHeight) * 0.8f).coerceAtLeast(1f)
 
-    LaunchedEffect(Unit) {
-        motionJob = scope.launch {
-            expansion.animateTo(1f, tween(380, easing = PlayerSheetEasing))
-        }
-    }
+    LaunchedEffect(motion) { motion.settle(close = false) }
 
-    fun settlePlayer(close: Boolean) {
-        // Button, Back and swipe all finish the same animation, exactly once.
-        if (isClosing) return
-        val start = (dragExpansion ?: expansion.value).coerceIn(0f, 1f)
-        motionJob?.cancel()
-        isClosing = close
-        dragExpansion = start
-        motionJob = scope.launch {
-            expansion.snapTo(start)
-            dragExpansion = null
-            if (close) {
-                expansion.animateTo(
-                    0f,
-                    tween(
-                        durationMillis = (300 * start).roundToInt().coerceIn(160, 300),
-                        easing = PlayerSheetEasing
-                    )
-                )
-                // The real library and mini-player are already underneath us.
-                // Pop only after reaching zero; no timeout or delayed second handoff.
-                latestOnBack()
-            } else {
-                expansion.animateTo(
-                    1f,
-                    spring(dampingRatio = Spring.DampingRatioNoBouncy, stiffness = 400f)
-                )
-            }
-        }
+    fun settlePlayer(close: Boolean, velocity: Float = 0f) {
+        motion.settle(close, velocity, dismissDistance) { latestOnBack() }
     }
 
     BackHandler(enabled = !showTrackSettings) { settlePlayer(close = true) }
 
-    // Gestures belong to the stationary parent so scaling the sheet cannot change
-    // pointer coordinates halfway through a drag.
-    Box(
-        Modifier
-            .fillMaxSize()
-            .onGloballyPositioned { playerBounds = it.boundsInRoot() }
-            .pointerInput(showTrackSettings, isClosing) {
-                if (!showTrackSettings && !isClosing) {
-                    detectVerticalDragGestures(
-                        onDragStart = {
-                            dragExpansion = dragExpansion ?: expansion.value
-                            motionJob?.cancel()
-                            velocityTracker.resetTracking()
-                        },
-                        onDragEnd = {
-                            val distance = (1f - (dragExpansion ?: expansion.value)) * latestDismissDistance
-                            val flingDown = distance > minimumFlingDistance &&
-                                velocityTracker.calculateVelocity().y > flingThreshold
-                            settlePlayer(close = distance >= latestCloseThreshold || flingDown)
-                        },
-                        onDragCancel = { if (!isClosing) settlePlayer(close = false) },
-                        onVerticalDrag = { change, dy ->
-                            change.consume()
-                            velocityTracker.addPosition(change.uptimeMillis, change.position)
-                            dragExpansion = ((dragExpansion ?: expansion.value) -
-                                dy / latestDismissDistance).coerceIn(0f, 1f)
-                        }
-                    )
-                }
+    // Capture the existing artwork display list: no second image request, bitmap copy,
+    // or disappearing/recreated cover at either end of the transition.
+    val artworkModifier = Modifier
+        .onGloballyPositioned { artworkBounds = it.boundsInRoot() }
+        .drawWithContent {
+            artworkLayer.record { this@drawWithContent.drawContent() }
+            if (motion.fraction >= 1f || settings.lyricsOnCover || miniArtworkBounds == null) {
+                drawLayer(artworkLayer)
             }
-    ) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .graphicsLayer {
-                    val progress = expandedFraction
-                    val parentOrigin = playerBounds?.topLeft ?: Offset.Zero
-                    val target = miniPlayerBounds?.takeIf { it.width > 0f && it.height > 0f }
-                        ?.translate(-parentOrigin)
-                        ?: Rect(
-                            12.dp.toPx(),
-                            size.height - 100.dp.toPx(),
-                            size.width - 12.dp.toPx(),
-                            size.height - 28.dp.toPx()
-                        )
-                    val sheetWidth = lerpFloat(target.width, size.width, progress)
-                    val sheetHeight = lerpFloat(target.height, size.height, progress)
-                    val scale = (sheetWidth / size.width.coerceAtLeast(1f)).coerceAtLeast(0.01f)
-                    val corner = 28.dp.toPx() * (1f - progress)
-                    translationX = target.left * (1f - progress)
-                    translationY = target.top * (1f - progress)
-                    scaleX = scale
-                    scaleY = scale
-                    transformOrigin = TransformOrigin(0f, 0f)
-                    // Uniform scale preserves the artwork; the viewport shrinks to
-                    // the measured mini-player instead of squashing the entire screen.
-                    shape = GenericShape { outlineSize, _ ->
-                        addRoundRect(
-                            RoundRect(
-                                0f, 0f, outlineSize.width, sheetHeight / scale,
-                                CornerRadius(corner / scale)
-                            )
-                        )
-                    }
-                    clip = true
-                    alpha = (progress / 0.35f).coerceIn(0f, 1f)
-                    shadowElevation = 12.dp.toPx() * (1f - progress)
-                }
-        ) {
-            Box(
-                Modifier.fillMaxSize()
-                    .background(c.surfaceColorAtElevation(NavigationBarDefaults.Elevation))
+        }
+    val lyricsModifier = Modifier.onGloballyPositioned { lyricsBounds = it.boundsInRoot() }
+
+    Box(
+        Modifier.fillMaxSize()
+            .onGloballyPositioned { playerBounds = it.boundsInRoot() }
+            .playerCollapseGestures(
+                enabled = !showTrackSettings,
+                canStart = { position ->
+                    val rootPosition = position + parentOrigin
+                    !queueExpanded && rootPosition.y < queueTop &&
+                        !(settings.lyricsOnCover && lyricsBounds?.contains(rootPosition) == true)
+                },
+                canDragUp = { motion.fraction < 1f },
+                onStart = { motion.grab() },
+                onDrag = { motion.dragBy(it, dismissDistance) },
+                onEnd = { velocity ->
+                    settlePlayer(
+                        shouldCollapsePlayer(motion.fraction, velocity, dismissDistance, density.density),
+                        velocity,
+                    )
+                },
+                onCancel = { settlePlayer(close = false) },
             )
+    ) {
+        // Only the background changes aspect ratio; artwork and controls never stretch.
+        Box(
+            Modifier.fillMaxSize().graphicsLayer {
+                val progress = expandedFraction
+                val target = miniPlayerBounds?.translate(-parentOrigin)
+                    ?: Rect(12.dp.toPx(), size.height - 150.dp.toPx(),
+                        size.width - 12.dp.toPx(), size.height - 86.dp.toPx())
+                val sx = lerpFloat(target.width, size.width, progress) / size.width.coerceAtLeast(1f)
+                val sy = lerpFloat(target.height, size.height, progress) / size.height.coerceAtLeast(1f)
+                val corner = 28.dp.toPx() * (1f - progress)
+                translationX = target.left * (1f - progress)
+                translationY = target.top * (1f - progress)
+                scaleX = sx
+                scaleY = sy
+                transformOrigin = TransformOrigin(0f, 0f)
+                shape = GenericShape { outlineSize, _ ->
+                    addRoundRect(RoundRect(0f, 0f, outlineSize.width, outlineSize.height,
+                        CornerRadius(corner / sx, corner / sy)))
+                }
+                clip = true
+                alpha = (progress / 0.18f).coerceIn(0f, 1f)
+                shadowElevation = 10.dp.toPx() * (1f - progress)
+            }
+        ) {
+            Box(Modifier.fillMaxSize()
+                .background(c.surfaceColorAtElevation(NavigationBarDefaults.Elevation)))
             AnimatedContent(
                 targetState = artworkGradientColors,
-                transitionSpec = {
-                    fadeIn(tween(1000)).togetherWith(fadeOut(tween(1000)))
-                },
+                transitionSpec = { fadeIn(tween(1000)).togetherWith(fadeOut(tween(1000))) },
                 label = "playerArtworkGradient"
             ) { colors ->
                 if (colors.size >= 2) {
-                    Box(
-                        Modifier.fillMaxSize()
-                            .background(Brush.verticalGradient(colors), alpha = 0.4f)
-                    )
+                    Box(Modifier.fillMaxSize()
+                        .background(Brush.verticalGradient(colors), alpha = 0.4f))
                 }
             }
+        }
 
+        // Keep layout coordinates stationary. Move the drawing, so measurements and
+        // gesture distances cannot feed the animated transform back into themselves.
+        Box(Modifier.fillMaxSize()
+            .graphicsLayer { alpha = ((expandedFraction - 0.12f) / 0.88f).coerceIn(0.001f, 1f) }
+            .drawWithContent {
+                translate(top = (1f - expandedFraction) * dismissDistance) {
+                    this@drawWithContent.drawContent()
+                }
+            }
+        ) {
             Box(
                 Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
                     .size(40.dp, 4.dp).clip(RoundedCornerShape(2.dp))
@@ -297,21 +262,59 @@ fun PlayerScreen(
                     song!!, isPlaying, duration, settings, isFavourite, 1f,
                     viewModel, customArtUri, previousCover, nextCover, requestClose,
                     onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev,
-                    swipeProgress, expandedFraction
+                    swipeProgress, expandedFraction, artworkModifier, lyricsModifier
                 )
             } else {
                 PlayerQueueHost(
                     viewModel = viewModel,
                     song = song!!,
                     isPlaying = isPlaying,
-                    gradientColors = artworkGradientColors
+                    gradientColors = artworkGradientColors,
+                    onQueueTopChanged = { queueTop = it },
+                    onQueueExpandedChanged = { queueExpanded = it },
                 ) { queueSlots ->
                     PortraitPlayerContent(
                         song!!, isPlaying, duration, settings, isFavourite, 1f,
                         viewModel, customArtUri, previousCover, nextCover, requestClose,
                         onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev,
-                        swipeProgress, expandedFraction, queueSlots
+                        swipeProgress, expandedFraction, queueSlots, artworkModifier, lyricsModifier
                     )
+                }
+            }
+        }
+
+        // Shared cover moves above the outgoing controls/queue, into the measured
+        // mini-player artwork. Vertical travel is linear while dragging; the lateral
+        // curve and rounded corners make the final docking softer.
+        if (!settings.lyricsOnCover) {
+            Canvas(Modifier.fillMaxSize().graphicsLayer {
+                alpha = (expandedFraction / 0.06f).coerceIn(0f, 1f)
+            }) {
+                val source = artworkBounds?.translate(-parentOrigin)
+                val target = miniArtworkBounds?.translate(-parentOrigin)
+                if (expandedFraction < 1f && source != null && target != null &&
+                    source.width > 0f && artworkLayer.size.width > 0
+                ) {
+                    val collapse = 1f - expandedFraction
+                    val curved = collapse * collapse * (3f - 2f * collapse)
+                    val width = lerpFloat(source.width, target.width, collapse)
+                    val left = lerpFloat(source.center.x, target.center.x, curved) - width / 2f
+                    val top = lerpFloat(source.top, target.top, collapse)
+                    val corner = lerpFloat(
+                        minOf(artworkCornerPx * width / source.width, width / 2f),
+                        14.dp.toPx(), collapse
+                    )
+                    val outline = Path().apply {
+                        addRoundRect(RoundRect(left, top, left + width, top + width,
+                            CornerRadius(corner)))
+                    }
+                    clipPath(outline) {
+                        translate(left, top) {
+                            scale(width / source.width, width / source.width, pivot = Offset.Zero) {
+                                drawLayer(artworkLayer)
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -327,8 +330,6 @@ fun PlayerScreen(
     }
 }
 
-private val PlayerSheetEasing = CubicBezierEasing(0.2f, 0f, 0f, 1f)
-
 @Composable
 private fun PortraitPlayerContent(
     song: com.musicplayer.data.Song, isPlaying: Boolean, duration: Long,
@@ -336,7 +337,9 @@ private fun PortraitPlayerContent(
     viewModel: MusicViewModel, customArtUri: android.net.Uri?, previousCover: CoverItem?, nextCover: CoverItem?,
     onBack: () -> Unit, onLyricsClick: () -> Unit, onSettingsClick: () -> Unit,
     onSwipeNext: () -> Unit, onSwipePrev: () -> Unit, swipeProgress: Float = 0f, openProgress: Float = 1f,
-    queueSlots: PlayerQueueSlots
+    queueSlots: PlayerQueueSlots,
+    artworkModifier: Modifier = Modifier,
+    lyricsModifier: Modifier = Modifier,
 ) {
     // Booming: кнопка «Текст» плавно меняет обложку на текст песни (alpha 1→0 / 0→1, 350 мс).
     val lyricsProgress by animateFloatAsState(
@@ -351,9 +354,9 @@ private fun PortraitPlayerContent(
         }
     }
     val density = LocalDensity.current
-    val contentReveal = (((openProgress - 0.34f) / 0.66f).coerceIn(0f, 1f) * (1f - swipeProgress * 1.1f)).coerceIn(0f, 1f)
+    val contentReveal = ((openProgress - 0.35f) / 0.65f).coerceIn(0f, 1f)
     val contentOffset = with(density) { lerpFloat(34.dp.toPx(), 0f, contentReveal) }
-    val topReveal = (((openProgress - 0.18f) / 0.82f).coerceIn(0f, 1f) * (1f - swipeProgress * 1.15f)).coerceIn(0f, 1f)
+    val topReveal = ((openProgress - 0.5f) / 0.5f).coerceIn(0f, 1f)
     Column(Modifier.fillMaxSize().padding(horizontal = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
         Box(Modifier.graphicsLayer {
             alpha = topReveal
@@ -371,9 +374,9 @@ private fun PortraitPlayerContent(
             song = song,
             lyricsProgress = lyricsProgress,
             onExpand = onLyricsClick,
-            modifier = Modifier.weight(1f).fillMaxWidth()
+            modifier = Modifier.weight(1f).fillMaxWidth().then(lyricsModifier)
         ) { coverScale ->
-            AlbumArtSection(song, isPlaying, artScale * coverScale, customArtUri, previousCover, nextCover, onSwipeNext, onSwipePrev, { viewModel.setCustomArt(song.id, null) }, settings.albumArtAnim, settings.animParams, openProgress)
+            AlbumArtSection(song, isPlaying, artScale * coverScale, customArtUri, previousCover, nextCover, onSwipeNext, onSwipePrev, { viewModel.setCustomArt(song.id, null) }, settings.albumArtAnim, settings.animParams, openProgress, artworkModifier)
         }
         Spacer(Modifier.height(24.dp))
         Column(Modifier.graphicsLayer {
@@ -400,7 +403,9 @@ private fun LandscapePlayerContent(
     settings: com.musicplayer.data.PlayerSettings, isFavourite: Boolean, artScale: Float,
     viewModel: MusicViewModel, customArtUri: android.net.Uri?, previousCover: CoverItem?, nextCover: CoverItem?,
     onBack: () -> Unit, onLyricsClick: () -> Unit, onSettingsClick: () -> Unit,
-    onSwipeNext: () -> Unit, onSwipePrev: () -> Unit, swipeProgress: Float = 0f, openProgress: Float = 1f
+    onSwipeNext: () -> Unit, onSwipePrev: () -> Unit, swipeProgress: Float = 0f, openProgress: Float = 1f,
+    artworkModifier: Modifier = Modifier,
+    lyricsModifier: Modifier = Modifier,
 ) {
     // Booming: кнопка «Текст» плавно меняет обложку на текст песни (alpha 1→0 / 0→1, 350 мс).
     val lyricsProgress by animateFloatAsState(
@@ -415,7 +420,7 @@ private fun LandscapePlayerContent(
         }
     }
     val density = LocalDensity.current
-    val sideReveal = (((openProgress - 0.28f) / 0.72f).coerceIn(0f, 1f) * (1f - swipeProgress * 1.1f)).coerceIn(0f, 1f)
+    val sideReveal = ((openProgress - 0.35f) / 0.65f).coerceIn(0f, 1f)
     val sideOffset = with(density) { lerpFloat(26.dp.toPx(), 0f, sideReveal) }
     Row(Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f).fillMaxHeight(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
@@ -431,9 +436,9 @@ private fun LandscapePlayerContent(
                 song = song,
                 lyricsProgress = lyricsProgress,
                 onExpand = onLyricsClick,
-                modifier = Modifier.weight(1f).fillMaxWidth()
+                modifier = Modifier.weight(1f).fillMaxWidth().then(lyricsModifier)
             ) { coverScale ->
-                AlbumArtSection(song, isPlaying, artScale * coverScale, customArtUri, previousCover, nextCover, onSwipeNext, onSwipePrev, { viewModel.setCustomArt(song.id, null) }, settings.albumArtAnim, settings.animParams, openProgress)
+                AlbumArtSection(song, isPlaying, artScale * coverScale, customArtUri, previousCover, nextCover, onSwipeNext, onSwipePrev, { viewModel.setCustomArt(song.id, null) }, settings.albumArtAnim, settings.animParams, openProgress, artworkModifier)
             }
         }
         Spacer(Modifier.width(16.dp))
@@ -566,7 +571,8 @@ private fun AlbumArtSection(
     customArtUri: android.net.Uri?, previousCover: CoverItem?, nextCover: CoverItem?,
     onSwipeNext: () -> Unit, onSwipePrev: () -> Unit, onResetArt: () -> Unit,
     albumArtAnim: Int = 0, animParams: com.musicplayer.data.AnimParams = com.musicplayer.data.AnimParams(),
-    openProgress: Float = 1f
+    openProgress: Float = 1f,
+    artworkModifier: Modifier = Modifier,
 ) {
     val c = MaterialTheme.colorScheme
     val appStyle = com.musicplayer.ui.theme.LocalAppStyle.current
@@ -575,6 +581,7 @@ private fun AlbumArtSection(
 
     Box(contentAlignment = Alignment.BottomEnd) {
         CoverSwipeCarousel(
+            modifier = artworkModifier,
             current = CoverItem(song.id, customArtUri ?: song.albumArtUri),
             previous = previousCover,
             next = nextCover,
