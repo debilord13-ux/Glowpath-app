@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1140" height="218" viewBox="0 0 1140 218" role="img" aria-labelledby="title desc"><title id="title">Примеры цветовых тем Glowpath</title><desc id="desc">Bloomee, Dark Brown, Ocean, Forest, Midnight и Light. Цвета взяты из палитр приложения.</desc><g font-family="DejaVu Sans, Arial, sans-serif">
+<rect x="0" y="0" width="1140" height="218" rx="24" fill="#131018"/>
+<text x="32" y="43" font-size="22" fill="#f2e7f0" font-weight="600" text-anchor="start">Выбери своё настроение</text>
+<rect x="32" y="65" width="166" height="90" rx="16" fill="#0a040c" stroke="#4c3b4d"/>
+<rect x="46" y="80" width="138" height="10" rx="5" fill="#fe385e"/>
+<rect x="46" y="101" width="90" height="5" rx="2.5" fill="#0ea5e0"/>
+<rect x="46" y="115" width="120" height="5" rx="2.5" fill="#0ea5e0"/>
+<rect x="46" y="133" width="50" height="8" rx="4" fill="#fe385e"/>
+<text x="32" y="181" font-size="14" fill="#dbcfdb" font-weight="500" text-anchor="start">Bloomee</text>
+<rect x="214" y="65" width="166" height="90" rx="16" fill="#1c1008" stroke="#4c3b4d"/>
+<rect x="228" y="80" width="138" height="10" rx="5" fill="#e8b88a"/>
+<rect x="228" y="101" width="90" height="5" rx="2.5" fill="#d4956a"/>
+<rect x="228" y="115" width="120" height="5" rx="2.5" fill="#d4956a"/>
+<rect x="228" y="133" width="50" height="8" rx="4" fill="#e8b88a"/>
+<text x="214" y="181" font-size="14" fill="#dbcfdb" font-weight="500" text-anchor="start">Dark Brown</text>
+<rect x="396" y="65" width="166" height="90" rx="16" fill="#050e1a" stroke="#4c3b4d"/>
+<rect x="410" y="80" width="138" height="10" rx="5" fill="#64b5f6"/>
+<rect x="410" y="101" width="90" height="5" rx="2.5" fill="#42a5f5"/>
+<rect x="410" y="115" width="120" height="5" rx="2.5" fill="#42a5f5"/>
+<rect x="410" y="133" width="50" height="8" rx="4" fill="#64b5f6"/>
+<text x="396" y="181" font-size="14" fill="#dbcfdb" font-weight="500" text-anchor="start">Ocean</text>
+<rect x="578" y="65" width="166" height="90" rx="16" fill="#060e08" stroke="#4c3b4d"/>
+<rect x="592" y="80" width="138" height="10" rx="5" fill="#81c784"/>
+<rect x="592" y="101" width="90" height="5" rx="2.5" fill="#66bb6a"/>
+<rect x="592" y="115" width="120" height="5" rx="2.5" fill="#66bb6a"/>
+<rect x="592" y="133" width="50" height="8" rx="4" fill="#81c784"/>
+<text x="578" y="181" font-size="14" fill="#dbcfdb" font-weight="500" text-anchor="start">Forest</text>
+<rect x="760" y="65" width="166" height="90" rx="16" fill="#02040e" stroke="#4c3b4d"/>
+<rect x="774" y="80" width="138" height="10" rx="5" fill="#7986cb"/>
+<rect x="774" y="101" width="90" height="5" rx="2.5" fill="#5c6bc0"/>
+<rect x="774" y="115" width="120" height="5" rx="2.5" fill="#5c6bc0"/>
+<rect x="774" y="133" width="50" height="8" rx="4" fill="#7986cb"/>
+<text x="760" y="181" font-size="14" fill="#dbcfdb" font-weight="500" text-anchor="start">Midnight</text>
+<rect x="942" y="65" width="166" height="90" rx="16" fill="#f5f0e8" stroke="#4c3b4d"/>
+<rect x="956" y="80" width="138" height="10" rx="5" fill="#8b4513"/>
+<rect x="956" y="101" width="90" height="5" rx="2.5" fill="#bb6b30"/>
+<rect x="956" y="115" width="120" height="5" rx="2.5" fill="#bb6b30"/>
+<rect x="956" y="133" width="50" height="8" rx="4" fill="#8b4513"/>
+<text x="942" y="181" font-size="14" fill="#dbcfdb" font-weight="500" text-anchor="start">Light</text>
+</g></svg>

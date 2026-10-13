@@ -1,174 +1,172 @@
 <div align="center">
-  <img src="app/src/main/res/drawable/welcome_app_icon.png" width="112" alt="Glowpath icon" />
+  <img src="app/src/main/res/drawable/welcome_app_icon.png" width="88" alt="Логотип Glowpath" />
   <h1>Glowpath</h1>
-  <p><strong>Твоя музыка — всегда с тобой.</strong></p>
-  <p>Современный Android-плеер на Kotlin и Jetpack Compose<br/>с локальной библиотекой и умным онлайн-поиском.</p>
-
+  <p><strong>Твоя музыка. Твой ритм.</strong></p>
+  <p>Android-плеер для музыки на устройстве:<br/>медиатека, очередь, тексты песен и оформление под тебя.</p>
   <p>
-    <a href="https://github.com/qrrrv/Glowpath-app/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/qrrrv/Glowpath-app/build.yml?style=flat-square&label=build" alt="Build status" /></a>
-    <img src="https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?style=flat-square&logo=kotlin&logoColor=white" alt="Kotlin" />
-    <img src="https://img.shields.io/badge/Jetpack%20Compose-Material%203-4285F4?style=flat-square&logo=jetpackcompose&logoColor=white" alt="Jetpack Compose" />
-    <img src="https://img.shields.io/badge/Android-API%2026%2B-3DDC84?style=flat-square&logo=android&logoColor=white" alt="Android API 26+" />
+    <a href="https://github.com/qrrrv/Glowpath-app/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/qrrrv/Glowpath-app/build.yml?branch=main&amp;style=flat-square&amp;label=build" alt="Статус сборки main" /></a>
+    <img src="https://img.shields.io/badge/Android-8.0%2B-81C784?style=flat-square&amp;logo=android&amp;logoColor=white" alt="Android 8.0 и новее" />
+    <img src="https://img.shields.io/badge/Kotlin-2.0.21-A78BFA?style=flat-square&amp;logo=kotlin&amp;logoColor=white" alt="Kotlin 2.0.21" />
+    <img src="https://img.shields.io/badge/Compose-Material%203-FE385E?style=flat-square" alt="Jetpack Compose и Material 3" />
+  </p>
+  <p>
+    <a href="#install"><strong>Скачать APK</strong></a> ·
+    <a href="#features">Возможности</a> ·
+    <a href="#gestures">Управление</a> ·
+    <a href="#development">Собрать из исходников</a>
   </p>
 </div>
 
-<br/>
+<p align="center">
+  <img src="docs/assets/interface-preview.svg" width="100%" alt="Примеры медиатеки с мини-плеером и большого плеера с обложкой, кнопками и очередью" />
+</p>
 
-<div align="center">
-  <img src="docs/assets/glowpath-showcase.gif" width="92%" alt="Glowpath animated showcase" />
-</div>
+<p align="center"><sub>Иллюстрации по текущей разметке приложения. Треки и обложки вымышлены; вид на устройстве зависит от темы, настроек и размера экрана.</sub></p>
 
-## О проекте
+<a id="features"></a>
 
-Glowpath — Android-приложение для тех, кто хочет держать музыку под рукой без перегруженного интерфейса.
+## Что умеет Glowpath
 
-- **Локальная библиотека** — слушай и организуй свои аудиофайлы.
-- **Онлайн-поиск** — Deezer используется как точный музыкальный каталог.
-- **Чистые результаты** — каверы, караоке и случайные совпадения отбрасываются.
-- **Загрузка в библиотеку** — mp3-ссылка разрешается через Hitmos только после точного совпадения артиста и трека.
-- **Material 3 UI** — плавный интерфейс на Jetpack Compose.
-- **Фоновое воспроизведение** — управление из системной шторки и с медиа-кнопок.
-
-<div align="center">
-  <img src="docs/assets/search-flow.gif" width="92%" alt="Glowpath online search flow" />
-</div>
-
-## Онлайн-поиск без мусора
-
-Поиск разделён на два независимых этапа:
-
-```mermaid
-flowchart LR
-    A[Запрос пользователя] --> B[Deezer API]
-    B --> C[Точные artist + title + cover + duration]
-    C --> D[Параллельный поиск на Hitmos]
-    D --> E{Точное совпадение?}
-    E -- Да --> F[Показать трек и mp3-ссылку]
-    E -- Нет --> G[Скрыть результат]
-```
-
-**Почему так:** Hitmos остаётся источником файла, но больше не определяет, какие треки показывать первыми. Deezer задаёт канонические метаданные, а Hitmos только подтверждает наличие конкретного mp3.
-
-```text
-OnlineSearchRepository
-├── DeezerApi.search(query)
-│   └── title, artist.name, album.cover_medium, duration
-└── HitmosRepository.findExactTrack(artist, title)
-    └── прямой mp3 URL или null
-```
-
-### Правило выдачи
-
-Трек появляется в результатах только если одновременно выполнены условия:
-
-1. Deezer вернул название и исполнителя.
-2. Hitmos вернул прямую ссылку на mp3.
-3. Нормализованный артист совпал полностью.
-4. Нормализованное название трека совпало полностью.
-
-Если mp3 не найден — результат не показывается. Это лучше, чем заполнять выдачу похожими каверами, караоке и случайными исполнителями.
-
-## Технологии
-
-| Слой | Используется |
+| | Возможности |
 | --- | --- |
-| Язык | Kotlin 2.0.21 |
-| UI | Jetpack Compose, Material 3 |
-| Асинхронность | Kotlin Coroutines, `Dispatchers.IO` |
-| HTML | Jsoup |
-| Изображения | Coil |
-| Воспроизведение | Android Media / foreground service |
-| Онлайн-каталог | [Deezer Search API](https://developers.deezer.com/api/search) |
-| Mp3-источник | [Hitmos](https://hitmos.me) |
-| Минимальная версия | Android 8.0 / API 26 |
+| **Медиатека** | Добавление отдельных файлов, поиск музыки на устройстве, поиск по названию и исполнителю, альбомы и свои плейлисты. |
+| **Плеер** | Большая обложка, мини-плеер, воспроизведение в фоне и управление через системные медиакнопки. |
+| **Очередь** | Следующий трек, изменение порядка, удаление из очереди и сохранение очереди в плейлист. |
+| **Тексты песен** | Обычные и синхронизированные тексты, локальные LRC-файлы, отображение вместо обложки и редактор. |
+| **Звук** | Эквалайзер, скорость воспроизведения, перемешивание, повтор и таймер сна. |
+| **Оформление** | Material 3, цветовые темы, собственная палитра, шрифты, форма элементов и настройки анимаций. |
+| **Онлайн-поиск** | Поиск треков через каталог Deezer с проверкой доступности файла на Hitmos. |
+| **Интеграции** | Данные текущего трека через локальный HTTP API и мост для ExteraGram. |
 
-## Структура проекта
+Проект активно меняется. Сборки из `main` предназначены для знакомства с приложением и проверки изменений; отдельные функции могут требовать доработки на конкретном устройстве.
 
-```text
-app/src/main/java/com/musicplayer/
-├── data/
-│   ├── OnlineSong.kt
-│   └── Song.kt
-├── repository/
-│   ├── OnlineSearchRepository.kt   # Deezer catalog + result resolution
-│   └── HitmosRepository.kt         # Hitmos HTML/mp3 parser
-├── service/
-│   └── MusicService.kt             # фоновые медиаконтролы
-├── ui/
-│   └── screens/                    # Compose-экраны
-└── viewmodel/
-    └── OnlineSearchViewModel.kt    # состояния поиска и загрузок
-```
+<a id="install"></a>
 
-Модели `OnlineSong`, `OnlineAlbumSummary` и `OnlineSearchPayload` сохранены совместимыми с существующим UI. Для нового алгоритма достаточно текущих полей: `title`, `artist`, `duration`, `downloadUrl`, `coverUrl`.
+## Установить на Android
 
-## Запуск
+1. Открой **[Actions → Build APK](https://github.com/qrrrv/Glowpath-app/actions/workflows/build.yml)**.
+2. Выбери завершившуюся сборку ветки `main` с зелёной отметкой.
+3. В разделе **Artifacts** скачай **GlowPath-release**. Для скачивания артефактов нужен вход в GitHub.
+4. Распакуй ZIP и установи находящийся внутри APK на устройство с **Android 8.0 или новее**.
 
-### Требования
+**Release** подходит для обычного использования и оценки плавности. **GlowPath-debug** — отладочная сборка для разработки.
 
-- Android Studio Ladybug или новее
-- JDK 17
-- Android SDK 36
-- Gradle wrapper из репозитория
+При первом запуске дай приложению доступ к аудиофайлам. В меню медиатеки выбери **«Найти всю музыку»** или добавь отдельный файл. Нажми на трек, чтобы начать воспроизведение.
 
-### Сборка
+<a id="gestures"></a>
+
+## Управление под рукой
+
+| Действие | Как сделать |
+| --- | --- |
+| Найти трек в своей библиотеке | Нажми лупу в верхней панели медиатеки. |
+| Развернуть плеер | Нажми на мини-плеер над нижней навигацией. |
+| Свернуть большой плеер | Потяни вниз по обложке или свободной области; движение вверх в том же жесте возвращает плеер. |
+| Переключить трек | Смахни обложку влево или вправо либо используй кнопки. |
+| Открыть очередь | Потяни нижнюю панель очереди вверх или нажми строку «Дальше». |
+| Показать текст песни | Нажми кнопку текста в верхней части плеера. |
+| Выбрать несколько треков | Удерживай трек в медиатеке, затем отмечай остальные. |
+
+Внутри открытой очереди и области текста вертикальные жесты используются для их собственного управления и прокрутки.
+
+## Оформление под тебя
+
+<p align="center">
+  <img src="docs/assets/theme-palette.svg" width="100%" alt="Примеры палитр приложения: Bloomee, Dark Brown, Ocean, Forest, Midnight и Light" />
+</p>
+
+В настройках доступны готовые темы и редактирование своей палитры. Можно менять шрифт, размеры текста, скругления и анимации. Выше показана часть цветовых наборов из приложения; итоговый вид также зависит от выбранного стиля интерфейса.
+
+## Если что-то непонятно
+
+<details>
+<summary><strong>Будет ли работать без интернета?</strong></summary>
+
+Добавленные локальные аудиофайлы воспроизводятся без сети. Интернет нужен для онлайн-поиска, загрузки файлов и получения текстов песен из внешних источников. Тексты также могут браться из локальных LRC-файлов и кэша.
+
+</details>
+
+<details>
+<summary><strong>Почему медиатека пустая?</strong></summary>
+
+Проверь разрешение на доступ к музыке в настройках Android. Затем открой меню медиатеки → **«Найти всю музыку»**. Отдельный файл можно добавить через системный выбор документов.
+
+</details>
+
+<details>
+<summary><strong>Почему онлайн-поиск ничего не нашёл?</strong></summary>
+
+Приложение получает до десяти кандидатов из Deezer и ищет для каждого соответствующий MP3 на Hitmos. В выдачу попадают только результаты с совпадающими после нормализации названием и исполнителем и найденной ссылкой на файл.
+
+Доступность зависит от обоих сервисов. Если каталог недоступен, файл отсутствует или названия версий трека отличаются, результат может быть пустым. Это не влияет на воспроизведение музыки, уже добавленной с устройства.
+
+</details>
+
+<details>
+<summary><strong>Где тексты песен?</strong></summary>
+
+Открой большой плеер и нажми кнопку текста. Синхронизация строк или слов доступна, когда найден текст с временными метками. Для других треков может отображаться обычный текст; свои правки можно внести в редакторе.
+
+</details>
+
+<details>
+<summary><strong>Как использовать текущий трек в других приложениях?</strong></summary>
+
+В репозитории есть [описание Now Playing API](docs/NOW_PLAYING_API.md) и [инструкция к плагину ExteraGram](exteragram_plugin/README_EXTERAGRAM_BRIDGE.txt).
+
+HTTP API работает, пока жив процесс Glowpath. Для доступа на том же устройстве используется адрес `http://127.0.0.1:8765`. Плагин ExteraGram получает метаданные и обложку через ContentProvider и формирует карточку трека на своей стороне.
+
+</details>
+
+<a id="development"></a>
+
+## Для разработчиков
+
+**Нужно:** JDK 17, Android SDK 36 и Gradle Wrapper из репозитория. Проект можно открыть в Android Studio; путь к установленному SDK укажи в локальном `local.properties`.
 
 ```bash
 git clone https://github.com/qrrrv/Glowpath-app.git
 cd Glowpath-app
-./gradlew assembleDebug
+chmod +x gradlew
+./gradlew testDebugUnitTest assembleDebug
 ```
 
-Открой проект в Android Studio, укажи Android SDK и запусти конфигурацию `app` на устройстве или эмуляторе с Android 8.0+.
+На Windows используй `gradlew.bat`. Отладочный APK появится в `app/build/outputs/apk/debug/`.
 
-> Для онлайн-поиска нужны доступ к интернету и разрешение `INTERNET`. API-ключи и OAuth не требуются.
+GitHub Actions запускает тесты жестов и собирает Release и Debug APK. Подписание сборок настроено в [workflow](.github/workflows/build.yml); локальная команда выше создаёт обычную отладочную сборку.
 
-## Ограничения онлайн-поиска
+<details>
+<summary><strong>Стек и устройство проекта</strong></summary>
 
-- Deezer Search API вызывается без ключа, но может быть временно недоступен или ограничен в отдельных сетях/регионах.
-- За один запрос запрашивается до 10 результатов.
-- Deezer не предоставляет прямой mp3-файл, поэтому загрузка зависит от доступности соответствующего трека на Hitmos.
-- При недоступном Deezer приложение не подменяет каталог случайной выдачей Hitmos: результат будет пустым, а не «мусорным».
-- Названия ремиксов, live-версий и альтернативных редакций считаются отдельными треками и не проходят строгую проверку, если Hitmos хранит их под другим названием.
+| Часть | Технологии |
+| --- | --- |
+| Интерфейс | Kotlin 2.0.21, Jetpack Compose, Material 3, Navigation Compose |
+| Состояние и фоновые задачи | ViewModel, StateFlow, Kotlin Coroutines |
+| Воспроизведение | Android MediaPlayer, MediaSession, foreground service |
+| Обложки и анимации | Coil, Palette, Lottie |
+| Сетевой поиск | Jsoup, Deezer, Hitmos |
+| Проверки | JUnit, Robolectric, Compose UI tests |
 
-## Проверка поиска
+```text
+app/src/main/java/com/musicplayer/
+├── data/          # треки, настройки, тексты песен
+├── repository/    # локальная библиотека и онлайн-поиск
+├── service/       # фоновое воспроизведение
+├── bridge/        # обмен данными с ExteraGram
+├── ui/            # экраны, компоненты, темы
+└── viewmodel/     # состояние и действия пользователя
 
-1. Запусти приложение.
-2. Открой онлайн-поиск.
-3. Введи, например, `Mirage` или имя популярного исполнителя.
-4. Убедись, что в карточке отображаются обложка и длительность.
-5. Проверь, что трек можно воспроизвести.
-6. Запусти загрузку и убедись, что файл появляется в библиотеке.
-7. Для негативной проверки используй название песни, которой нет на Hitmos: она не должна отображаться.
-
-Для быстрой проверки Deezer из терминала:
-
-```bash
-curl 'https://api.deezer.com/search?q=mirage&limit=1'
+app/src/test/      # проверки жестов плеера
+docs/              # документация и иллюстрации
+exteragram_plugin/ # плагин карточки текущего трека
 ```
 
-## Разрешения
+</details>
 
-Приложение использует системные разрешения Android для:
+## Нашёл проблему или есть идея?
 
-- чтения локальных аудиофайлов;
-- загрузки файлов в папку Music;
-- фонового воспроизведения;
-- сетевого онлайн-поиска;
-- уведомлений о воспроизведении и загрузках.
+[Создай issue](https://github.com/qrrrv/Glowpath-app/issues/new) и укажи модель устройства, версию Android и сборку приложения. Для ошибки полезны шаги воспроизведения и описание того, что ожидалось. Для проблем с анимацией особенно помогает короткая запись экрана.
 
-## Статус
+---
 
-Проект находится в активной разработке. Основной приоритет — стабильное воспроизведение, аккуратная локальная библиотека и предсказуемый онлайн-поиск без нерелевантной выдачи.
-
-## Лицензия и источники
-
-Перед использованием онлайн-функций убедись, что скачивание и хранение контента разрешено законодательством твоей страны и условиями соответствующих сервисов.
-
-- [Deezer API documentation](https://developers.deezer.com/api/search)
-- [Jsoup](https://jsoup.org/)
-- [Jetpack Compose](https://developer.android.com/compose)
-
-<div align="center">
-  <sub>Built with Kotlin, Compose and a little bit of glow.</sub>
-</div>
+<p align="center"><sub>Glowpath · музыка на устройстве, оформление по вкусу.</sub></p>

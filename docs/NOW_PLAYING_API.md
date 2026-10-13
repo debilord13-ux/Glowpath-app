@@ -1,4 +1,3 @@
-```markdown
 # GlowPath Now Playing API
 
 Локальный HTTP API для получения текущего трека из GlowPath.
@@ -213,4 +212,3 @@ Authority: `com.musicplayer.bridge`
 Поллинг раз в 8–15 секунд обычно достаточно для авто-обновления.
 
 Вопросы и PR — в Issues репозитория.
-```
