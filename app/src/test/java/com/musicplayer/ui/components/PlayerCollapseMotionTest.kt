@@ -35,6 +35,8 @@ class PlayerCollapseMotionTest {
     private var childDrag = 0f
     private var clicks = 0
     private var releasedVelocity = 0f
+    private var endedGestures = 0
+    private var cancelledGestures = 0
     private val travel = 600f
 
     private fun showPlayer(excluded: Boolean = false, horizontalChild: Boolean = false) {
@@ -49,13 +51,17 @@ class PlayerCollapseMotionTest {
                     onStart = { motion.grab() },
                     onDrag = { motion.dragBy(it, travel) },
                     onEnd = { velocity ->
+                        endedGestures++
                         releasedVelocity = velocity
                         motion.settle(
                             shouldCollapsePlayer(motion.fraction, velocity, travel, 1f),
                             velocity, travel,
                         ) { closeCount++ }
                     },
-                    onCancel = { motion.settle(close = false) },
+                    onCancel = {
+                        cancelledGestures++
+                        motion.settle(close = false)
+                    },
                 )) {
                 // A consuming child reproduces the original gesture arbitration bug.
                 Box(Modifier.fillMaxSize()
@@ -94,6 +100,8 @@ class PlayerCollapseMotionTest {
         player.performTouchInput { cancel() }
         compose.mainClock.advanceTimeBy(1500)
         compose.runOnIdle {
+            assertEquals(0, endedGestures)
+            assertEquals(1, cancelledGestures)
             assertEquals(1f, motion.fraction, 0.001f)
             assertEquals(0, closeCount)
         }

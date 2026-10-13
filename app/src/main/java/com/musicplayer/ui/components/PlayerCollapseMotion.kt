@@ -108,6 +108,9 @@ internal fun Modifier.playerCollapseGestures(
                     // A second finger cancels rather than jumping to a new pointer.
                     if (event.changes.count { it.pressed } > 1) break
                     val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    // Compose represents ACTION_CANCEL as an already-consumed up.
+                    // Check consumption before release so cancellation always reopens.
+                    if (change.isConsumed) break
                     tracker.addPosition(change.uptimeMillis, change.position)
                     if (!change.pressed) {
                         if (claimed) {
@@ -118,7 +121,6 @@ internal fun Modifier.playerCollapseGestures(
                         break
                     }
                     if (!claimed) {
-                        if (change.isConsumed) break
                         val total = change.position - down.position
                         if (maxOf(abs(total.x), abs(total.y)) <= viewConfiguration.touchSlop) continue
                         if (abs(total.x) >= abs(total.y)) break
