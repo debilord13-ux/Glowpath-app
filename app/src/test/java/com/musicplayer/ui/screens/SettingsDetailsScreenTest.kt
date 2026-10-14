@@ -187,6 +187,7 @@ class SettingsDetailsScreenTest {
         compose.onNodeWithText("Сведения скопированы").assertIsDisplayed()
     }
 
+    @OptIn(ExperimentalTestApi::class)
     @Test fun projectLinkSupportsKeyboardAndControlsHaveTouchTargets() {
         showAbout()
         compose.onNodeWithContentDescription("Назад").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
