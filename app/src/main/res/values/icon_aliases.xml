@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <item type="mipmap" name="ic_launcher">@drawable/welcome_app_icon</item>
-    <item type="mipmap" name="ic_launcher_round">@drawable/welcome_app_icon</item>
+    <item type="mipmap" name="ic_launcher">@mipmap/welcome_app_icon</item>
+    <item type="mipmap" name="ic_launcher_round">@mipmap/welcome_app_icon</item>
 </resources>

@@ -99,7 +99,7 @@ internal fun AboutScreenContent(
                         verticalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Image(
-                            painterResource(R.drawable.welcome_app_icon),
+                            painterResource(R.mipmap.welcome_app_icon),
                             contentDescription = "Значок Glowpath",
                             modifier = Modifier.size(88.dp).clip(RoundedCornerShape(24.dp)),
                         )

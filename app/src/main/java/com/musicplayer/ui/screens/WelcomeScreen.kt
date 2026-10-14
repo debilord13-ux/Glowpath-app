@@ -319,7 +319,7 @@ private fun BrandLockup(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.spacedBy(6.dp)
     ) {
         Image(
-            painter = painterResource(R.drawable.welcome_app_icon),
+            painter = painterResource(R.mipmap.welcome_app_icon),
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
