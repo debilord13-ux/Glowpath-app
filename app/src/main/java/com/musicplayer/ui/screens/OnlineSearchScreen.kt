@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalFocusManager
@@ -160,6 +161,7 @@ internal fun OnlineSearchContent(
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val focusRequester = remember { FocusRequester() }
+    var fieldFocused by remember { mutableStateOf(false) }
     val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val listState = rememberLazyListState()
     var selectedUrls by remember { mutableStateOf(setOf<String>()) }
@@ -179,6 +181,12 @@ internal fun OnlineSearchContent(
         listState.scrollToItem(0)
     }
     BackHandler(enabled = isActive && selectionMode) { selectedUrls = emptySet() }
+    LaunchedEffect(isActive, fieldFocused) {
+        if (!isActive && fieldFocused) {
+            focusManager.clearFocus()
+            keyboard?.hide()
+        }
+    }
 
     fun submit(value: String) {
         if (value.isBlank()) return
@@ -275,7 +283,8 @@ internal fun OnlineSearchContent(
                                 onSearch = { submit(it) },
                                 expanded = false,
                                 onExpandedChange = {},
-                                modifier = Modifier.focusRequester(focusRequester).testTag("online_query"),
+                                modifier = Modifier.focusRequester(focusRequester)
+                                    .onFocusChanged { fieldFocused = it.hasFocus }.testTag("online_query"),
                                 placeholder = { Text("Трек или исполнитель", fontFamily = font,
                                     maxLines = 1, overflow = TextOverflow.Ellipsis) },
                                 leadingIcon = {

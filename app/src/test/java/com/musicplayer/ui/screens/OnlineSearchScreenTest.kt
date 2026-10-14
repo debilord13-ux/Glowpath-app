@@ -35,6 +35,7 @@ import java.io.File
 class OnlineSearchScreenTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     private var ui by mutableStateOf(OnlineSearchUiState())
+    private var searchActive by mutableStateOf(true)
     private val searches = mutableListOf<String>()
     private val plays = mutableListOf<String>()
     private val downloads = mutableListOf<String>()
@@ -72,7 +73,7 @@ class OnlineSearchScreenTest {
                             onCancelDownload = { cancelled += it },
                             onRemoveHistory = { query -> ui = ui.copy(history = ui.history - query) },
                             onClearHistory = { ui = ui.copy(history = emptyList()) },
-                        ))
+                        ), isActive = searchActive)
                     }
                 }
             }
@@ -80,6 +81,16 @@ class OnlineSearchScreenTest {
     }
 
     private fun card(song: OnlineSong) = compose.onNodeWithTag("online_track_${song.downloadUrl}")
+
+    @Test fun leavingSearchReleasesInputFocus() {
+        show(OnlineSearchUiState())
+        compose.onNodeWithTag("online_query").performClick().assertIsFocused()
+        compose.runOnIdle { searchActive = false }
+        compose.onNodeWithTag("online_query").assertIsNotFocused()
+        compose.runOnIdle { searchActive = true }
+        compose.onNodeWithTag("online_query").assertIsNotFocused()
+        compose.onNodeWithTag("online_query").performClick().assertIsFocused()
+    }
 
     @Test fun keyboardSearchTrimsQueryAndIgnoresWhitespace() {
         show(OnlineSearchUiState())
