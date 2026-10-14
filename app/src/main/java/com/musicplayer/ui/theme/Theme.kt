@@ -83,7 +83,7 @@ val ColorScheme.textDisabled: Color
 val ColorScheme.divider: Color
     get() = outlineVariant
 
-// CompositionLocal для стиля интерфейса (радиусы, толщина ползунка)
+// CompositionLocal для стиля приложения (радиусы, толщина ползунка)
 data class AppStyle(
     val interfaceStyle: InterfaceStyle = InterfaceStyle.MATERIAL3,
     val buttonCornerRadius: Float = 20f,
@@ -138,7 +138,9 @@ private fun AppColors.withInterfaceStyle(
     )
 }
 
-private fun appStyleFor(interfaceStyle: InterfaceStyle): AppStyle {
+private fun appStyleFor(
+    interfaceStyle: InterfaceStyle
+): AppStyle {
     val preset = when (interfaceStyle) {
         InterfaceStyle.CLASSIC -> AppStyle(
             interfaceStyle = interfaceStyle,
@@ -172,7 +174,9 @@ private fun appStyleFor(interfaceStyle: InterfaceStyle): AppStyle {
     return preset
 }
 
-private fun shapesForInterfaceStyle(interfaceStyle: InterfaceStyle): MaterialShapes {
+private fun shapesForInterfaceStyle(
+    interfaceStyle: InterfaceStyle
+): MaterialShapes {
     val baseCorner = when (interfaceStyle) {
         InterfaceStyle.CLASSIC -> 16f
         InterfaceStyle.MATERIAL3 -> 18f
@@ -190,7 +194,9 @@ private fun shapesForInterfaceStyle(interfaceStyle: InterfaceStyle): MaterialSha
     )
 }
 
-fun appColorsForTheme(theme: AppTheme): AppColors = when (theme) {
+fun appColorsForTheme(
+    theme: AppTheme
+): AppColors = when (theme) {
     AppTheme.MATERIAL_YOU -> AppColors(
         bgDeep       = LightBg,         bgSurface   = LightSurface,
         bgCard       = LightCard,       bgElevated  = LightElevated,
@@ -609,15 +615,18 @@ fun appColorsForTheme(theme: AppTheme): AppColors = when (theme) {
 private fun buildMaterialColorScheme(
     colors: AppColors,
     isLight: Boolean,
-    interfaceStyle: InterfaceStyle
+    interfaceStyle: InterfaceStyle,
+    surfaceTintStrength: Float = 1f,
+    surfaceToneMix: Float = 1f,
+    containerVibrance: Float = 1f
 ) : ColorScheme = run {
     val tintAmount = when (interfaceStyle) {
         InterfaceStyle.CLASSIC -> if (isLight) 0.03f else 0.06f
         InterfaceStyle.MATERIAL3 -> if (isLight) 0.05f else 0.10f
         InterfaceStyle.LIQUID_GLASS -> if (isLight) 0.07f else 0.12f
-    }
-    val surfaceMixFactor = 1f
-    val containerFactor = 1f
+    } * surfaceTintStrength.coerceIn(0.35f, 1.9f)
+    val surfaceMixFactor = surfaceToneMix.coerceIn(0.4f, 1.8f)
+    val containerFactor = containerVibrance.coerceIn(0.4f, 1.8f)
     val primary = colors.accent
     val secondary = colors.accentVar.blendWith(primary, if (isLight) 0.12f else 0.08f)
     val tertiary = colors.accentMuted.blendWith(colors.accentVar, if (isLight) 0.30f else 0.24f)
@@ -848,7 +857,9 @@ fun MusicPlayerTheme(
     val themedTypography = remember(appFontFamily) { Typography.withFontFamily(appFontFamily) }
     val isClassicBloomee = resolvedTheme == AppTheme.BLOOMEE && normalizedInterfaceStyle == InterfaceStyle.CLASSIC
     val appStyle = remember(resolvedTheme, normalizedInterfaceStyle) {
-        val baseStyle = appStyleFor(interfaceStyle = normalizedInterfaceStyle)
+        val baseStyle = appStyleFor(
+            interfaceStyle = normalizedInterfaceStyle
+        )
         if (isClassicBloomee) {
             baseStyle.copy(
                 buttonCornerRadius = 22f,
@@ -870,7 +881,9 @@ fun MusicPlayerTheme(
                 extraLarge = RoundedCornerShape(36.dp)
             )
         } else {
-            shapesForInterfaceStyle(interfaceStyle = normalizedInterfaceStyle)
+            shapesForInterfaceStyle(
+                interfaceStyle = normalizedInterfaceStyle
+            )
         }
     }
 
@@ -883,7 +896,7 @@ fun MusicPlayerTheme(
             else -> dynamicDarkColorScheme(context)
         }
     }
-    val targetColorScheme = remember(seedColors, isLight, dynamicColorScheme) {
+    val targetColorScheme = remember(seedColors, isLight, dynamicColorScheme, resolvedTheme) {
         dynamicColorScheme ?: buildMaterialColorScheme(
             colors = seedColors,
             isLight = isLight,
