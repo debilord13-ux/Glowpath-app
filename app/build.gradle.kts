@@ -15,6 +15,14 @@ android {
         versionCode = 8
         versionName = "1.0-http"
 
+        // Embed the identity of this APK, not the latest build available online.
+        val revision = providers.environmentVariable("GITHUB_SHA").orNull.orEmpty()
+            .takeIf { it.matches(Regex("[a-fA-F0-9]{40}")) }.orEmpty()
+        val buildNumber = providers.environmentVariable("GITHUB_RUN_NUMBER").orNull.orEmpty()
+            .takeIf { it.matches(Regex("[0-9]+")) }.orEmpty()
+        buildConfigField("String", "SOURCE_REVISION", "\"$revision\"")
+        buildConfigField("String", "CI_BUILD_NUMBER", "\"$buildNumber\"")
+
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -36,6 +44,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     testOptions.unitTests.isIncludeAndroidResources = true

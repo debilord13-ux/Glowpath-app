@@ -1,8 +1,7 @@
 /*
- * Rhythm-inspired About screen.
- * Original Rhythm project: https://github.com/cromaguy/Rhythm
- * Licensed under GPL-3.0-or-later. This adaptation keeps the original
- * author credits and visual structure as requested.
+ * Originally adapted from Rhythm: https://github.com/cromaguy/Rhythm
+ * Original author: Anjishnu Nandi (cromaguy), GPL-3.0-or-later.
+ * Glowpath layout and project information have since been redesigned.
  */
 package com.musicplayer.ui.screens
 
@@ -10,334 +9,272 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.os.Build
+import android.net.Uri
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.scaleIn
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.BugReport
-import androidx.compose.material.icons.rounded.Build
-import androidx.compose.material.icons.rounded.Code
-import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.DeveloperMode
-import androidx.compose.material.icons.rounded.Info
-import androidx.compose.material.icons.rounded.Language
-import androidx.compose.material.icons.rounded.Memory
-import androidx.compose.material.icons.rounded.MusicNote
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.LargeTopAppBar
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.rememberTopAppBarState
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import coil.compose.AsyncImage
-import coil.request.ImageRequest
 import com.musicplayer.R
-import com.musicplayer.ui.theme.LocalAppFontFamily
 
-private data class AboutDetail(val icon: ImageVector, val label: String, val value: String)
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
     val context = LocalContext.current
-    val font = LocalAppFontFamily.current
-    val listState = rememberLazyListState()
-    val topBarState = rememberTopAppBarState()
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(topBarState)
-    val packageInfo = rememberPackageInfo(context)
-    val version = packageInfo.first
-    val build = packageInfo.second
-    val visible by remember { androidx.compose.runtime.mutableStateOf(true) }
-
-    val detailCards = listOf(
-        AboutDetail(Icons.Rounded.Info, "Версия", version),
-        AboutDetail(Icons.Rounded.Build, "Сборка", build),
-        AboutDetail(Icons.Rounded.DeveloperMode, "Target SDK", "36"),
-        AboutDetail(Icons.Rounded.Memory, "Архитектура", Build.SUPPORTED_ABIS.take(2).joinToString(", ").ifBlank { "ARM64 & ARM32" })
+    val build = remember(context) { readAppBuildInfo(context) }
+    AboutScreenContent(
+        build = build,
+        onBack = onBack,
+        onOpenUrl = { url ->
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+                .onFailure { Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show() }
+        },
+        onCopyInfo = {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            clipboard.setPrimaryClip(ClipData.newPlainText("Сведения о Glowpath", build.diagnostics()))
+            Toast.makeText(context, "Сведения скопированы", Toast.LENGTH_SHORT).show()
+        },
     )
+}
 
-
-    fun openUrl(url: String) {
-        runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(url))) }
-    }
-    fun copy(label: String, value: String) {
-        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
-        Toast.makeText(context, "$label скопировано", Toast.LENGTH_SHORT).show()
-    }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun AboutScreenContent(
+    build: AppBuildInfo,
+    onBack: () -> Unit,
+    onOpenUrl: (String) -> Unit,
+    onCopyInfo: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    var deviceExpanded by rememberSaveable { mutableStateOf(false) }
+    var creditsExpanded by rememberSaveable { mutableStateOf(false) }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        containerColor = MaterialTheme.colorScheme.background,
+        containerColor = colors.surface,
         topBar = {
             LargeTopAppBar(
-                title = { Text("О приложении", fontFamily = font, fontWeight = FontWeight.Bold) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.Rounded.ArrowBack, "Назад") } },
-                colors = TopAppBarDefaults.largeTopAppBarColors(containerColor = MaterialTheme.colorScheme.background),
-                scrollBehavior = scrollBehavior
+                title = { Text("О приложении") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
+                },
+                colors = TopAppBarDefaults.largeTopAppBarColors(containerColor = colors.surface),
+                scrollBehavior = scrollBehavior,
             )
-        }
+        },
     ) { padding ->
         LazyColumn(
-            state = listState,
-            modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 24.dp),
-            contentPadding = PaddingValues(bottom = 28.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("about_list"),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(20.dp),
         ) {
-            item { Spacer(Modifier.height(8.dp)) }
-            item {
-                AnimatedVisibility(visible = visible, enter = fadeIn() + scaleIn(animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy))) {
-                    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.Center) {
-                            Image(
-                                painter = painterResource(R.drawable.glowpath_app_icon),
-                                contentDescription = "Иконка Glowpath",
-                                modifier = Modifier
-                                    .size(82.dp)
-                                    .clip(RoundedCornerShape(24.dp))
+            item(key = "identity") {
+                Surface(color = colors.primaryContainer, shape = RoundedCornerShape(32.dp)) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Image(
+                            painterResource(R.drawable.welcome_app_icon),
+                            contentDescription = "Значок Glowpath",
+                            modifier = Modifier.size(88.dp).clip(RoundedCornerShape(24.dp)),
+                        )
+                        Text("Glowpath", style = MaterialTheme.typography.headlineLarge)
+                        Text(
+                            "Твоя музыка, всегда с тобой",
+                            style = MaterialTheme.typography.bodyMedium,
+                            textAlign = TextAlign.Center,
+                        )
+                        Surface(
+                            color = colors.surface.copy(alpha = 0.72f),
+                            contentColor = colors.onSurface,
+                            shape = MaterialTheme.shapes.extraLarge,
+                            modifier = Modifier.padding(top = 4.dp),
+                        ) {
+                            Text(
+                                "${build.versionName} · ${build.variantLabel}",
+                                style = MaterialTheme.typography.labelLarge,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                             )
-                            Spacer(Modifier.width(2.dp))
-                            Text("Glowpath", style = MaterialTheme.typography.displaySmall, fontFamily = font, fontWeight = FontWeight.Bold)
                         }
-                        Text("Music Player", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Твоя музыка, всегда с тобой.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     }
                 }
             }
-            item { DetailGrid(details = detailCards, onCopy = ::copy) }
-            item {
-                Text("Developer", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
-                DeveloperCard(
-                    name = "Anjishnu Nandi", github = "cromaguy", avatar = "https://github.com/cromaguy.png",
-                    onOpen = ::openUrl, website = "https://rhythmweb.vercel.app/", support = "https://ko-fi.com/anjishnunandi"
-                )
-            }
-            item { CommunityGroup("Package Maintainers", aboutMaintainers, ::openUrl) }
-            item { CommunityGroup("Collaborators & Contributors", aboutCollaborators, ::openUrl) }
-            item { CommunityGroup("Design & Testing", aboutDesignTesting, ::openUrl) }
-            item { ActionGroup("Actions", aboutActions, ::openUrl) }
-            item {
-                Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-                    Text("Rhythm-inspired Material 3 design", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            item(key = "build") {
+                AboutSection("Установленная версия") {
+                    AboutInfoRow(Icons.Rounded.Tag, "Код версии", build.versionCode.toString())
+                    AboutDivider()
+                    AboutInfoRow(Icons.Rounded.Build, "Сборка", build.buildLabel)
+                    AboutDivider()
+                    AboutInfoRow(Icons.Rounded.Code, "Ревизия кода", build.revisionLabel)
+                    FilledTonalButton(
+                        onClick = onCopyInfo,
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                    ) {
+                        Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Скопировать сведения", textAlign = TextAlign.Center)
+                    }
                 }
+            }
+            item(key = "device") {
+                AboutExpandableCard(
+                    title = "Устройство и совместимость",
+                    subtitle = "Android ${build.androidVersion} · API ${build.androidSdk}",
+                    icon = Icons.Rounded.PhoneAndroid,
+                    expanded = deviceExpanded,
+                    onClick = { deviceExpanded = !deviceExpanded },
+                ) {
+                    AboutInfoRow(Icons.Rounded.Smartphone, "Устройство", build.device)
+                    AboutInfoRow(Icons.Rounded.Memory, "Архитектуры устройства", build.deviceAbis)
+                    AboutInfoRow(Icons.Rounded.Android, "Минимальный уровень Android API", build.minSdk.toString())
+                    AboutInfoRow(Icons.Rounded.DeveloperMode, "Целевой уровень Android API", build.targetSdk.toString())
+                    AboutInfoRow(Icons.Rounded.Apps, "Имя пакета", build.packageName)
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
+            item(key = "project") {
+                AboutSection("Проект") {
+                    aboutActions.forEachIndexed { index, action ->
+                        AboutLinkRow(action.icon, action.title, action.description) { onOpenUrl(action.url) }
+                        if (index < aboutActions.lastIndex) AboutDivider()
+                    }
+                }
+            }
+            item(key = "credits") {
+                AboutExpandableCard(
+                    title = "Благодарности",
+                    subtitle = "Авторы и источники вдохновения",
+                    icon = Icons.Rounded.FavoriteBorder,
+                    expanded = creditsExpanded,
+                    onClick = { creditsExpanded = !creditsExpanded },
+                ) {
+                    Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            "Первоначальный экран «О приложении» основан на Rhythm (GPL-3.0-or-later). Спасибо его авторам:",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        rhythmCredits.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant) }
+                    }
+                    AboutLinkRow(Icons.Rounded.Code, "Проект Rhythm", "Исходный проект и его участники") {
+                        onOpenUrl("https://github.com/cromaguy/Rhythm")
+                    }
+                    AboutLinkRow(Icons.Rounded.Album, "Проект Booming Music", "Вдохновение для раздела альбомов") {
+                        onOpenUrl("https://github.com/mardous/BoomingMusic")
+                    }
+                }
+            }
+            item(key = "footer") {
+                Text(
+                    "Сделано для музыки. И для тебя.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
         }
     }
 }
 
 @Composable
-private fun DetailGrid(details: List<AboutDetail>, onCopy: (String, String) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        details.chunked(2).forEachIndexed { row, cards ->
-            Row(Modifier.fillMaxWidth().height(94.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                cards.forEachIndexed { col, detail ->
-                    DetailCard(detail, Modifier.weight(1f), detailShape(row * 2 + col, details.size), onCopy)
-                }
-            }
-        }
-        DetailCard(
-            AboutDetail(Icons.Rounded.ContentCopy, "Copy System Info", "Glowpath ${details.first().value} • Android ${Build.VERSION.RELEASE}"),
-            Modifier.fillMaxWidth().height(82.dp), RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 20.dp, bottomEnd = 20.dp), onCopy
+private fun AboutSection(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.padding(start = 16.dp).semantics { heading() },
         )
-    }
-}
-
-@Composable
-private fun DetailCard(detail: AboutDetail, modifier: Modifier, shape: RoundedCornerShape, onCopy: (String, String) -> Unit) {
-    Card(modifier = modifier.clickable { onCopy(detail.label, detail.value) }, shape = shape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-        Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(detail.icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(detail.label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            Text(detail.value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-    }
-}
-
-private fun detailShape(index: Int, total: Int) = when (index) {
-    0 -> RoundedCornerShape(topStart = 20.dp, topEnd = 6.dp, bottomStart = 6.dp, bottomEnd = 6.dp)
-    1 -> RoundedCornerShape(topStart = 6.dp, topEnd = 20.dp, bottomStart = 6.dp, bottomEnd = 6.dp)
-    else -> RoundedCornerShape(6.dp)
-}
-
-@Composable
-private fun DeveloperCard(name: String, github: String, avatar: String, website: String, support: String, onOpen: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp, bottomStart = 8.dp, bottomEnd = 8.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current).data(avatar).crossfade(true).build(),
-                    contentDescription = name,
-                    modifier = Modifier
-                        .size(96.dp)
-                        .clip(RoundedCornerShape(34.dp)),
-                    placeholder = painterResource(R.drawable.ic_music_placeholder),
-                    error = painterResource(R.drawable.ic_music_placeholder)
-                )
-                Spacer(Modifier.height(16.dp))
-                Text(name, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
-                Spacer(Modifier.height(18.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ExpressiveButton(Icons.Rounded.Language, "Visit Website", Modifier.weight(1f)) { onOpen(website) }
-                    ExpressiveButton(Icons.Rounded.Code, "View GitHub", Modifier.weight(1f)) { onOpen("https://github.com/$github") }
-                }
-                Spacer(Modifier.height(10.dp))
-                Button(onClick = { onOpen(support) }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp), contentPadding = PaddingValues(vertical = 12.dp)) { Text("Support Development", fontWeight = FontWeight.Bold) }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(topStart = 8.dp, topEnd = 8.dp, bottomStart = 28.dp, bottomEnd = 28.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
-            Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("Team ChromaHub", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.primary)
-                Spacer(Modifier.height(6.dp))
-                Text("Passionate developers creating innovative experiences", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
-            }
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+            Column(Modifier.fillMaxWidth(), content = content)
         }
     }
 }
 
 @Composable
-private fun ExpressiveButton(icon: ImageVector, text: String, modifier: Modifier, onClick: () -> Unit) {
-    val interaction = remember { MutableInteractionSource() }
-    val pressed by interaction.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) .97f else 1f, spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "about_button_scale")
-    Surface(
-        modifier = modifier
-            .height(48.dp)
-            .graphicsLayerCompat(scale)
-            .clickable(
-                interactionSource = interaction,
-                indication = null,
-                onClick = onClick
-            ),
-        shape = if (text.startsWith("Visit")) {
-            RoundedCornerShape(topStart = 20.dp, bottomStart = 20.dp, topEnd = 8.dp, bottomEnd = 8.dp)
-        } else {
-            RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp, topEnd = 20.dp, bottomEnd = 20.dp)
-        },
-        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        tonalElevation = 0.dp
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center
-        ) {
-            Icon(icon, null, modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurface)
-            Spacer(Modifier.width(8.dp))
-            Text(text, maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurface, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelLarge)
-        }
-    }
-}
-
-private fun Modifier.graphicsLayerCompat(scale: Float) = this.then(Modifier.graphicsLayer { scaleX = scale; scaleY = scale })
-
-@Composable
-private fun CommunityGroup(title: String, members: List<CommunityMember>, onOpen: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp), modifier = Modifier.animateContentSize()) { members.forEachIndexed { index, member -> CommunityRow(member, onOpen, index == 0, index == members.lastIndex) } }
-    }
+private fun AboutInfoRow(icon: ImageVector, label: String, value: String) {
+    ListItem(
+        headlineContent = { Text(value, style = MaterialTheme.typography.bodyLarge) },
+        overlineContent = { Text(label, style = MaterialTheme.typography.labelMedium) },
+        leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    )
 }
 
 @Composable
-private fun CommunityRow(member: CommunityMember, onOpen: (String) -> Unit, first: Boolean, last: Boolean) {
-    val context = LocalContext.current
-    val avatar = "https://github.com/${member.github}.png"
-    Card(modifier = Modifier.fillMaxWidth().clickable { onOpen("https://github.com/${member.github}") }, shape = when { first && last -> RoundedCornerShape(24.dp); first -> RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 6.dp, bottomEnd = 6.dp); last -> RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 24.dp, bottomEnd = 24.dp); else -> RoundedCornerShape(6.dp) }, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-        Row(Modifier.padding(horizontal = 21.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(model = ImageRequest.Builder(context).data(avatar).crossfade(true).build(), contentDescription = member.name, modifier = Modifier.size(48.dp).clip(RoundedCornerShape(16.dp)), placeholder = painterResource(R.drawable.ic_music_placeholder), error = painterResource(R.drawable.ic_music_placeholder))
-            Column(Modifier.weight(1f).padding(horizontal = 14.dp)) { Text(member.name, fontWeight = FontWeight.Bold); Text(member.role, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 24.sp)
+private fun AboutLinkRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
+    ListItem(
+        modifier = Modifier.clickable(onClick = onClick),
+        headlineContent = { Text(title, style = MaterialTheme.typography.titleSmall) },
+        supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodyMedium) },
+        leadingContent = { AboutLeadingIcon(icon) },
+        trailingContent = { Icon(Icons.Rounded.ArrowOutward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
+        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+    )
+}
+
+@Composable
+private fun AboutExpandableCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    expanded: Boolean,
+    onClick: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "about_expand")
+    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
+        Column {
+            ListItem(
+                modifier = Modifier.clickable(onClick = onClick).semantics {
+                    stateDescription = if (expanded) "Развёрнуто" else "Свёрнуто"
+                },
+                headlineContent = { Text(title, style = MaterialTheme.typography.titleSmall) },
+                supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodyMedium) },
+                leadingContent = { AboutLeadingIcon(icon) },
+                trailingContent = { Icon(Icons.Rounded.ExpandMore, null, Modifier.rotate(rotation)) },
+                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+            )
+            AnimatedVisibility(expanded) { Column(content = content) }
         }
     }
 }
 
 @Composable
-private fun ActionGroup(title: String, actions: List<AboutAction>, onOpen: (String) -> Unit) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { actions.forEachIndexed { index, action ->
-            val shape = when { actions.size == 1 -> RoundedCornerShape(24.dp); index == 0 -> RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp, bottomStart = 6.dp, bottomEnd = 6.dp); index == actions.lastIndex -> RoundedCornerShape(topStart = 6.dp, topEnd = 6.dp, bottomStart = 24.dp, bottomEnd = 24.dp); else -> RoundedCornerShape(6.dp) }
-            Card(modifier = Modifier.fillMaxWidth().clickable { action.url?.let(onOpen) }, shape = shape, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)) {
-                Row(Modifier.padding(horizontal = 21.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Surface(Modifier.size(40.dp), shape = CircleShape, color = MaterialTheme.colorScheme.secondaryContainer) { Box(contentAlignment = Alignment.Center) { Icon(action.icon, null, tint = MaterialTheme.colorScheme.onSecondaryContainer, modifier = Modifier.size(21.dp)) } }
-                    Column(Modifier.weight(1f).padding(horizontal = 14.dp)) { Text(action.title, fontWeight = FontWeight.Bold); Text(action.description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                    Text("›", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 24.sp)
-                }
-            }
-        } }
+private fun AboutLeadingIcon(icon: ImageVector) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
+        Icon(icon, null, Modifier.padding(10.dp).size(22.dp))
     }
 }
 
 @Composable
-private fun rememberPackageInfo(context: Context): Pair<String, String> = remember(context) {
-    runCatching {
-        @Suppress("DEPRECATION") val info = context.packageManager.getPackageInfo(context.packageName, 0)
-        val version = info.versionName ?: "неизвестно"
-        val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            info.longVersionCode.toString()
-        } else {
-            @Suppress("DEPRECATION")
-            info.versionCode.toString()
-        }
-        version to code
-    }.getOrDefault("неизвестно" to "неизвестно")
+private fun AboutDivider() {
+    HorizontalDivider(Modifier.padding(start = 56.dp, end = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }

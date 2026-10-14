@@ -48,7 +48,6 @@ import com.musicplayer.data.AppTheme
 import com.musicplayer.data.InterfaceStyle
 import com.musicplayer.data.PlayerSettings
 import com.musicplayer.data.RepeatMode
-import com.musicplayer.data.SortOrder
 import kotlin.math.roundToInt
 import com.musicplayer.ui.theme.*
 import com.musicplayer.ui.theme.LocalAppFontFamily
@@ -115,6 +114,7 @@ fun SettingsScreen(
     val sleepTimerState by viewModel.sleepTimerState.collectAsState()
     var showThemeDialog by remember { mutableStateOf(false) }
     var showTypographyStudio by remember { mutableStateOf(false) }
+    var showSortSheet by rememberSaveable { mutableStateOf(false) }
     var settingsQuery by rememberSaveable { mutableStateOf("") }
     val selectedBuiltInFont = remember(settings.selectedFontId) {
         AppFontList.firstOrNull { it.id == settings.selectedFontId } ?: DefaultAppFont
@@ -136,12 +136,7 @@ fun SettingsScreen(
             "Осталось ${formatSleepTimerDuration(sleepTimerState.remainingSeconds)}"
         else -> "Таймер сна, затухание и действие по завершении"
     }
-    val appVersion = remember(context) {
-        runCatching {
-            @Suppress("DEPRECATION")
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }.getOrDefault("0.9")
-    }
+    val appVersion = remember(context) { readAppBuildInfo(context).versionName }
     val openFontPicker = onFontClick
     val openAbout = onAboutClick
 
@@ -224,6 +219,7 @@ fun SettingsScreen(
                     onEqualizer = onEqualizerClick,
                     onStats = onStatsClick,
                     onAbout = openAbout,
+                    onSort = { showSortSheet = true },
                     onShuffle = { viewModel.updateSettings(settings.copy(shuffleEnabled = !settings.shuffleEnabled)) },
                     onWavySeekBar = { viewModel.updateSettings(settings.copy(useWavySeekBar = !settings.useWavySeekBar)) }
                 )
@@ -329,8 +325,8 @@ fun SettingsScreen(
                 )
                 SettingsGroupDivider()
                 SettingsSortItem(
-                    settings = settings,
-                    onSortChange = { viewModel.updateSettings(settings.copy(sortOrder = it)) }
+                    sortOrder = settings.sortOrder,
+                    onClick = { showSortSheet = true }
                 )
                 SettingsGroupDivider()
                 SettingsNavigationItem(
@@ -383,6 +379,14 @@ fun SettingsScreen(
 
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    if (showSortSheet) {
+        LibrarySortSheet(
+            sortOrder = settings.sortOrder,
+            onSortChange = { viewModel.updateSettings(settings.copy(sortOrder = it)) },
+            onDismiss = { showSortSheet = false },
+        )
     }
 
     if (showThemeDialog) {
@@ -588,6 +592,7 @@ private fun SettingsSearchResults(
     onEqualizer: () -> Unit,
     onStats: () -> Unit,
     onAbout: () -> Unit,
+    onSort: () -> Unit,
     onShuffle: () -> Unit,
     onWavySeekBar: () -> Unit
 ) {
@@ -601,6 +606,7 @@ private fun SettingsSearchResults(
         Triple("Переходы", "Кроссфейд и смена треков", Icons.Rounded.SwapHoriz) to onTransitions,
         Triple("Таймер сна", "Остановка после трека и затухание", Icons.Rounded.Bedtime) to onSleepTimer,
         Triple("Эквалайзер", "Пресеты и настройка звучания", Icons.Rounded.GraphicEq) to onEqualizer,
+        Triple("Сортировка", "Название, исполнитель, альбом, длительность и дата добавления", Icons.Rounded.Sort) to onSort,
         Triple("Перемешивание", "Случайный порядок треков", Icons.Rounded.Shuffle) to onShuffle,
         Triple("Волнистый ползунок", "Анимированный seek bar в плеере", Icons.Rounded.ShowChart) to onWavySeekBar,
         Triple("Статистика", "История прослушивания", Icons.Rounded.BarChart) to onStats,
@@ -1819,67 +1825,6 @@ fun SettingsRepeatItem(settings: PlayerSettings, onRepeatChange: (RepeatMode) ->
     }
 }
 
-@Composable
-fun SettingsSortItem(settings: PlayerSettings, onSortChange: (SortOrder) -> Unit) {
-    val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
-    var expanded by remember { mutableStateOf(false) }
-    val options = listOf(
-        SortOrder.TITLE      to "По названию",
-        SortOrder.ARTIST     to "По исполнителю",
-        SortOrder.ALBUM      to "По альбому",
-        SortOrder.DURATION   to "По длительности",
-        SortOrder.DATE_ADDED to "По дате добавления"
-    )
-    val currentLabel = options.find { it.first == settings.sortOrder }?.second ?: "По названию"
-
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        ListItem(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 6.dp, vertical = 2.dp)
-                .clip(RoundedCornerShape(22.dp))
-                .clickable { expanded = !expanded },
-            colors = ListItemDefaults.colors(containerColor = Color.Transparent),
-            headlineContent = {
-                Text("Сортировка", color = colors.onSurface, fontFamily = font, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            },
-            supportingContent = {
-                Text(currentLabel, color = colors.onSurfaceVariant, fontFamily = font, fontSize = 12.sp, lineHeight = 16.sp)
-            },
-            leadingContent = { SettingsLeadingIcon(icon = Icons.Rounded.Sort, tint = IconGreen) },
-            trailingContent = {
-                Icon(
-                    if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    null,
-                    tint = colors.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-        )
-
-        AnimatedVisibility(
-            visible = expanded,
-            enter = expandVertically(animationSpec = tween(280, easing = EaseOutCubic)) + fadeIn(tween(220)),
-            exit  = shrinkVertically(animationSpec = tween(220, easing = EaseInCubic))  + fadeOut(tween(180))
-        ) {
-            Column(
-                modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                options.forEach { (order, label) ->
-                    SettingsChoiceRow(label = label, selected = settings.sortOrder == order) {
-                        onSortChange(order)
-                        expanded = false
-                    }
-                }
-            }
-        }
-    }
-}
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TypographyStudioDialog(
