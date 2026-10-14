@@ -29,6 +29,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.style.TextOverflow
 import kotlinx.coroutines.launch
 
 @Composable
@@ -97,7 +98,7 @@ internal fun AboutScreenContent(
         snackbarHost = { SnackbarHost(snackbar, Modifier.widthIn(max = 560.dp)) },
         topBar = {
             TopAppBar(
-                title = { Text("О приложении") },
+                title = { Text("О приложении", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
                 },

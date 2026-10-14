@@ -14,10 +14,13 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.InputMode
+import androidx.compose.ui.input.InputModeManager
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalInputModeManager
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.junit4.StateRestorationTester
@@ -49,13 +52,15 @@ class SettingsDetailsScreenTest {
     private var openedUrl: String? = null
     private var backClicks = 0
     private var renderedColors: ColorScheme? = null
+    private var inputModeManager: InputModeManager? = null
 
     private fun themed(light: Boolean = false, fontScale: Float = 1f, content: @Composable () -> Unit) {
         compose.setContent {
             MusicPlayerTheme(appTheme = if (light) AppTheme.LIGHT else AppTheme.BLOOMEE) {
                 MaterialTheme(typography = Typography()) {
                     val colors = MaterialTheme.colorScheme
-                    SideEffect { renderedColors = colors }
+                    val inputMode = LocalInputModeManager.current
+                    SideEffect { renderedColors = colors; inputModeManager = inputMode }
                     CompositionLocalProvider(
                         LocalAppFontFamily provides FontFamily.SansSerif,
                         LocalDensity provides Density(LocalDensity.current.density, fontScale),
@@ -190,10 +195,12 @@ class SettingsDetailsScreenTest {
     @OptIn(ExperimentalTestApi::class)
     @Test fun projectLinkSupportsKeyboardAndControlsHaveTouchTargets() {
         showAbout()
-        compose.onNodeWithContentDescription("Назад").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+        // IconButton uses a 40 dp visual container and an expanded 48 dp touch target.
+        compose.onNodeWithContentDescription("Назад").assertTouchHeightIsEqualTo(48.dp).assertTouchWidthIsEqualTo(48.dp)
         compose.onNodeWithText("Сборки приложения").performScrollTo().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithText("Скопировать сведения").performScrollTo().assertHeightIsAtLeast(48.dp)
         compose.onNodeWithTag("about_list").performScrollToNode(hasText("Исходный код"))
+        compose.runOnIdle { requireNotNull(inputModeManager).requestInputMode(InputMode.Keyboard) }
         compose.onNodeWithText("Исходный код").assertHeightIsAtLeast(48.dp)
             .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
         compose.onNodeWithText("Исходный код").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
