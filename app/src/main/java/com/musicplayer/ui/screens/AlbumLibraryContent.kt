@@ -5,6 +5,7 @@ package com.musicplayer.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.material.icons.Icons
@@ -43,14 +44,16 @@ internal fun AlbumLibraryContent(
     var searching by rememberSaveable { mutableStateOf(false) }
     val albumsGrid = rememberLazyGridState()
     val playlistsGrid = rememberLazyGridState()
+    val overviewScrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val openAlbum = (state.albums + state.playlists).firstOrNull { it.key == openAlbumKey }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
-    val navigationActions = actions.copy(onOpen = {
-        focusManager.clearFocus()
-        keyboard?.hide()
-        actions.onOpen(it)
-    })
+    fun releaseInput() { focusManager.clearFocus(); keyboard?.hide() }
+    val navigationActions = actions.copy(
+        onOpen = { releaseInput(); actions.onOpen(it) },
+        onPlay = { queue, song -> releaseInput(); actions.onPlay(queue, song) },
+        onShuffle = { releaseInput(); actions.onShuffle(it) },
+    )
 
     LaunchedEffect(openAlbumKey, openAlbum) {
         if (openAlbumKey != null && openAlbum == null) actions.onOpen(null)
@@ -59,7 +62,7 @@ internal fun AlbumLibraryContent(
     // This tab is precomposed by the pager; it must not intercept Back in another tab.
     BackHandler(enabled = isActive && openAlbum != null) { navigationActions.onOpen(null) }
 
-    SharedTransitionLayout(Modifier.fillMaxSize().testTag("album_library")) {
+    SharedTransitionLayout(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface).testTag("album_library")) {
         AnimatedContent(
             targetState = openAlbum,
             contentKey = { it?.key ?: "overview" },
@@ -77,6 +80,7 @@ internal fun AlbumLibraryContent(
                 AlbumOverview(
                     state, navigationActions, tab, listMode, sort, query, searching, isActive && openAlbum == null,
                     gridState = if (tab == 0) albumsGrid else playlistsGrid,
+                    scrollBehavior = overviewScrollBehavior,
                     onTab = {
                         tab = it; query = ""
                         if (it == 1 && sort == AlbumSort.Artist) sort = AlbumSort.Title
@@ -108,6 +112,7 @@ private fun SharedTransitionScope.AlbumOverview(
     searching: Boolean,
     isActive: Boolean,
     gridState: LazyGridState,
+    scrollBehavior: TopAppBarScrollBehavior,
     onTab: (Int) -> Unit,
     onListMode: () -> Unit,
     onSort: (AlbumSort) -> Unit,
@@ -117,7 +122,6 @@ private fun SharedTransitionScope.AlbumOverview(
 ) {
     val colors = MaterialTheme.colorScheme
     val font = LocalAppFontFamily.current
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
     val entries = if (tab == 0) state.albums else state.playlists
     val visible = remember(entries, query, sort) { entries.filteredAndSorted(query, sort) }
     var showSort by remember { mutableStateOf(false) }

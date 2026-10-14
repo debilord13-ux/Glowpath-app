@@ -202,10 +202,14 @@ class AlbumLibraryScreenTest {
         show()
         compose.mainClock.autoAdvance = false
         openFirst()
+        compose.mainClock.advanceTimeByFrame()
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(192)
         capture("album-opening-midpoint")
         compose.mainClock.advanceTimeBy(500)
         compose.onNodeWithContentDescription("К альбомам").performClick()
+        compose.mainClock.advanceTimeByFrame()
+        compose.waitForIdle()
         compose.mainClock.advanceTimeBy(192)
         capture("album-return-midpoint")
         compose.mainClock.advanceTimeBy(500)
@@ -219,6 +223,11 @@ class AlbumLibraryScreenTest {
             val view = compose.activity.findViewById<View>(android.R.id.content)
             val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
             view.draw(Canvas(bitmap))
+            if (name.contains("midpoint")) {
+                // Sliding pages must never expose an empty strip at either screen edge.
+                assertEquals(255, android.graphics.Color.alpha(bitmap.getPixel(0, view.height / 2)))
+                assertEquals(255, android.graphics.Color.alpha(bitmap.getPixel(view.width - 1, view.height / 2)))
+            }
             val directory = File("build/reports/album-preview").apply { mkdirs() }
             File(directory, "$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
             bitmap.recycle()

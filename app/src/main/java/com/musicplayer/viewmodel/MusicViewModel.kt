@@ -496,7 +496,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 if (s.folderPath?.contains("MusicPlayer") == true) s.copy(albumArtUri = null)
                 else s
             }
-            val newList  = (_songs.value + newSongs).sortedBy { it.title }
+            // Refresh album ordering for tracks already present in pre-track-number caches,
+            // retaining their custom titles, covers and hidden state.
+            val scannedByUri = found.associateBy { it.uri }
+            val refreshedSongs = _songs.value.map { existing ->
+                scannedByUri[existing.uri]?.let { scanned ->
+                    existing.copy(trackNumber = scanned.trackNumber)
+                } ?: existing
+            }
+            val newList = (refreshedSongs + newSongs).sortedBy { it.title }
             _songs.value = newList
             debouncedSaveSongs(newList)
             normalizeUserAlbums(newList)
