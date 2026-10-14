@@ -73,9 +73,13 @@ internal data class AboutAction(
     val url: String,
 )
 
+internal val aboutBuildsAction = AboutAction(
+    Icons.Rounded.Download, "Сборки приложения", "Готовые APK в GitHub Actions",
+    "$GLOWPATH_REPOSITORY/actions/workflows/build.yml",
+)
+
 internal val aboutActions = listOf(
     AboutAction(Icons.Rounded.Code, "Исходный код", "Проект Glowpath на GitHub", GLOWPATH_REPOSITORY),
-    AboutAction(Icons.Rounded.Download, "Сборки приложения", "Готовые APK в GitHub Actions", "$GLOWPATH_REPOSITORY/actions/workflows/build.yml"),
     AboutAction(Icons.Rounded.BugReport, "Сообщить об ошибке", "Или предложить улучшение", "$GLOWPATH_REPOSITORY/issues"),
     AboutAction(Icons.Rounded.Extension, "Библиотеки", "Зависимости и их версии", "$GLOWPATH_REPOSITORY/blob/main/app/build.gradle.kts"),
 )

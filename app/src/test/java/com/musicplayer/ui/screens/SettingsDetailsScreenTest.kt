@@ -13,9 +13,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.StateRestorationTester
+import androidx.core.graphics.ColorUtils
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
@@ -42,11 +48,14 @@ class SettingsDetailsScreenTest {
     private val changes = mutableListOf<SortOrder>()
     private var openedUrl: String? = null
     private var backClicks = 0
+    private var renderedColors: ColorScheme? = null
 
     private fun themed(light: Boolean = false, fontScale: Float = 1f, content: @Composable () -> Unit) {
         compose.setContent {
             MusicPlayerTheme(appTheme = if (light) AppTheme.LIGHT else AppTheme.BLOOMEE) {
                 MaterialTheme(typography = Typography()) {
+                    val colors = MaterialTheme.colorScheme
+                    SideEffect { renderedColors = colors }
                     CompositionLocalProvider(
                         LocalAppFontFamily provides FontFamily.SansSerif,
                         LocalDensity provides Density(LocalDensity.current.density, fontScale),
@@ -60,7 +69,7 @@ class SettingsDetailsScreenTest {
     private fun showAbout(light: Boolean = false, fontScale: Float = 1f) {
         val build = readAppBuildInfo(compose.activity)
         themed(light, fontScale) {
-            AboutScreenContent(build, { backClicks++ }, { openedUrl = it }, {})
+            AboutScreenContent(build, { backClicks++ }, { openedUrl = it; true }, { true })
         }
     }
 
@@ -133,7 +142,123 @@ class SettingsDetailsScreenTest {
         compose.runOnIdle { assertEquals(1, backClicks) }
     }
 
-    @Test fun renderAboutDark() { showAbout(); capture("about-dark") }
+    private fun assertAboutTextContrast() {
+        compose.runOnIdle {
+            val colors = requireNotNull(renderedColors)
+            val pairs = listOf(
+                colors.onSurface to colors.surface,
+                colors.onSurfaceVariant to colors.surface,
+                colors.onSecondaryContainer to colors.secondaryContainer,
+                colors.inverseOnSurface to colors.inverseSurface,
+            )
+            pairs.forEach { (foreground, background) ->
+                val contrast = ColorUtils.calculateContrast(foreground.toArgb(), background.toArgb())
+                assertTrue("Text contrast is $contrast", contrast >= 4.5)
+            }
+        }
+    }
+
+    @Test fun renderAboutDark() { showAbout(); assertAboutTextContrast(); capture("about-dark") }
+
+    @Test fun renderAboutLight() { showAbout(light = true); assertAboutTextContrast(); capture("about-light") }
+
+    @Test fun failedLinkCanBeCopiedFromTheSnackbar() {
+        val build = readAppBuildInfo(compose.activity)
+        var copied: String? = null
+        themed {
+            AboutScreenContent(build, {}, { false }, { copied = it; true })
+        }
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Исходный код"))
+        compose.onNodeWithText("Исходный код").performClick()
+        compose.onNodeWithText("Не удалось открыть ссылку").assertIsDisplayed()
+        compose.onNodeWithText("Скопировать", substring = false).performClick()
+        compose.runOnIdle { assertEquals(GLOWPATH_REPOSITORY, copied) }
+        compose.onNodeWithText("Ссылка скопирована").assertIsDisplayed()
+    }
+
+    @Test fun copyFailureAllowsRetryAndReportsSuccess() {
+        val build = readAppBuildInfo(compose.activity)
+        var canCopy by mutableStateOf(false)
+        themed { AboutScreenContent(build, {}, { true }, { canCopy }) }
+        compose.onNodeWithText("Скопировать сведения").performScrollTo().performClick()
+        compose.onNodeWithText("Не удалось скопировать. Попробуй ещё раз.").assertIsDisplayed()
+        compose.runOnIdle { canCopy = true }
+        compose.onNodeWithText("Скопировать сведения").performClick()
+        compose.onNodeWithText("Сведения скопированы").assertIsDisplayed()
+    }
+
+    @Test fun projectLinkSupportsKeyboardAndControlsHaveTouchTargets() {
+        showAbout()
+        compose.onNodeWithContentDescription("Назад").assertHeightIsAtLeast(48.dp).assertWidthIsAtLeast(48.dp)
+        compose.onNodeWithText("Сборки приложения").performScrollTo().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithText("Скопировать сведения").performScrollTo().assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Исходный код"))
+        compose.onNodeWithText("Исходный код").assertHeightIsAtLeast(48.dp)
+            .performSemanticsAction(SemanticsActions.RequestFocus) { it() }
+        compose.onNodeWithText("Исходный код").assertIsFocused().performKeyInput { pressKey(Key.Enter) }
+        compose.runOnIdle { assertEquals(GLOWPATH_REPOSITORY, openedUrl) }
+    }
+
+    @Test fun expandedDeviceInformationSurvivesStateRestoration() {
+        val build = readAppBuildInfo(compose.activity)
+        val restoration = StateRestorationTester(compose)
+        restoration.setContent { MaterialTheme { AboutScreenContent(build, {}, { true }, { true }) } }
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Устройство и совместимость"))
+        compose.onNodeWithText("Устройство и совместимость").performClick()
+        restoration.emulateSavedInstanceStateRestore()
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Устройство и совместимость"))
+        compose.onNodeWithText("Устройство и совместимость")
+            .assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Развёрнуто"))
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Имя пакета"))
+        compose.onNodeWithText(build.packageName).assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "w1000dp-h800dp")
+    @Test fun wideLayoutKeepsVersionAndProjectActionsTogether() {
+        showAbout(light = true)
+        compose.onNodeWithTag("about_summary_pane").assertIsDisplayed()
+        compose.onNodeWithText("Сборки приложения").assertIsDisplayed().performClick()
+        compose.runOnIdle { assertEquals(aboutBuildsAction.url, openedUrl) }
+        compose.onNodeWithText("Исходный код").assertIsDisplayed()
+        capture("about-wide")
+    }
+
+    @Config(qualifiers = "w839dp-h900dp")
+    @Test fun mediumWindowUsesOneReadingFlow() {
+        showAbout()
+        compose.onNodeWithTag("about_summary_pane").assertDoesNotExist()
+        compose.onNodeWithText("Сборки приложения").performScrollTo().assertIsDisplayed()
+        capture("about-medium")
+    }
+
+    @Config(qualifiers = "w840dp-h900dp")
+    @Test fun expandedWidthStartsTheSupportingPane() {
+        showAbout()
+        compose.onNodeWithTag("about_summary_pane").assertIsDisplayed()
+        compose.onNodeWithText("Сборки приложения").assertIsDisplayed()
+        compose.onNodeWithText("Исходный код").assertIsDisplayed()
+    }
+
+    @Config(qualifiers = "w900dp-h400dp")
+    @Test fun shortLandscapeWindowKeepsEverythingScrollable() {
+        showAbout(light = true)
+        compose.onNodeWithTag("about_summary_pane").assertDoesNotExist()
+        compose.onNodeWithText("Скопировать сведения").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Устройство и совместимость"))
+        compose.onNodeWithText("Устройство и совместимость").assertIsDisplayed()
+        capture("about-short-landscape")
+    }
+
+    @Config(qualifiers = "w320dp-h568dp")
+    @Test fun doubledTextStillAllowsCopyingAndOpeningAllDeviceDetails() {
+        showAbout(light = true, fontScale = 2f)
+        compose.onNodeWithText("Скопировать сведения").performScrollTo().assertIsDisplayed()
+        capture("about-text-200-percent")
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Устройство и совместимость"))
+        compose.onNodeWithText("Устройство и совместимость").performClick()
+        compose.onNodeWithTag("about_list").performScrollToNode(hasText("Имя пакета"))
+        compose.onNodeWithText("com.musicplayer").assertIsDisplayed()
+    }
 
     @Test fun renderAboutLightWithDeviceExpanded() {
         showAbout(light = true)

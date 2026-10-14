@@ -10,14 +10,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.Toast
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.foundation.Image
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
@@ -26,19 +24,12 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.rotate
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.musicplayer.R
+import kotlinx.coroutines.launch
 
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
@@ -48,13 +39,13 @@ fun AboutScreen(onBack: () -> Unit) {
         build = build,
         onBack = onBack,
         onOpenUrl = { url ->
-            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
-                .onFailure { Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show() }
+            runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }.isSuccess
         },
-        onCopyInfo = {
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            clipboard.setPrimaryClip(ClipData.newPlainText("Сведения о Glowpath", build.diagnostics()))
-            Toast.makeText(context, "Сведения скопированы", Toast.LENGTH_SHORT).show()
+        onCopyInfo = { value ->
+            runCatching {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("Glowpath", value))
+            }.isSuccess
         },
     )
 }
@@ -64,217 +55,154 @@ fun AboutScreen(onBack: () -> Unit) {
 internal fun AboutScreenContent(
     build: AppBuildInfo,
     onBack: () -> Unit,
-    onOpenUrl: (String) -> Unit,
-    onCopyInfo: () -> Unit,
+    onOpenUrl: (String) -> Boolean,
+    onCopyInfo: (String) -> Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
-    val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
+    val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
+    val listState = rememberLazyListState()
+    val summaryScroll = rememberScrollState()
+    val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
     var deviceExpanded by rememberSaveable { mutableStateOf(false) }
     var creditsExpanded by rememberSaveable { mutableStateOf(false) }
+    val fontScale = LocalDensity.current.fontScale
+
+    fun copyInformation() {
+        val success = onCopyInfo(build.diagnostics())
+        scope.launch {
+            snackbar.currentSnackbarData?.dismiss()
+            snackbar.showSnackbar(if (success) "Сведения скопированы" else "Не удалось скопировать. Попробуй ещё раз.")
+        }
+    }
+    fun openLink(url: String) {
+        snackbar.currentSnackbarData?.dismiss()
+        if (!onOpenUrl(url)) scope.launch {
+            val result = snackbar.showSnackbar(
+                message = "Не удалось открыть ссылку",
+                actionLabel = "Скопировать",
+                withDismissAction = true,
+                duration = SnackbarDuration.Long,
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                val success = onCopyInfo(url)
+                snackbar.showSnackbar(if (success) "Ссылка скопирована" else "Не удалось скопировать. Попробуй ещё раз.")
+            }
+        }
+    }
 
     Scaffold(
         modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
         containerColor = colors.surface,
+        snackbarHost = { SnackbarHost(snackbar, Modifier.widthIn(max = 560.dp)) },
         topBar = {
-            LargeTopAppBar(
+            TopAppBar(
                 title = { Text("О приложении") },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "Назад") }
                 },
-                colors = TopAppBarDefaults.largeTopAppBarColors(containerColor = colors.surface),
                 scrollBehavior = scrollBehavior,
             )
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding).testTag("about_list"),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp),
+        BoxWithConstraints(
+            Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            item(key = "identity") {
-                Surface(color = colors.primaryContainer, shape = RoundedCornerShape(32.dp)) {
+            // A supporting pane is useful only when both panes have enough reading space.
+            // At large font scales or short landscape heights retain the single reading flow.
+            val twoPane = maxWidth >= AboutLayout.ExpandedWidth && maxHeight >= 480.dp && fontScale <= 1.3f
+            val pageInset = if (maxWidth >= 600.dp) 24.dp else 16.dp
+            Row(
+                Modifier.widthIn(max = if (twoPane) AboutLayout.MaxContentWidth else AboutLayout.ReadingWidth).fillMaxSize()
+                    .padding(horizontal = pageInset),
+                horizontalArrangement = Arrangement.spacedBy(AboutLayout.SectionGap),
+            ) {
+                if (twoPane) {
                     Column(
-                        Modifier.fillMaxWidth().padding(24.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                        Modifier.width(AboutLayout.SummaryWidth).fillMaxHeight()
+                            .verticalScroll(summaryScroll).testTag("about_summary_pane")
+                            .padding(top = 24.dp, bottom = 32.dp),
+                        verticalArrangement = Arrangement.spacedBy(AboutLayout.SectionGap),
                     ) {
-                        Image(
-                            painterResource(R.mipmap.welcome_app_icon),
-                            contentDescription = "Значок Glowpath",
-                            modifier = Modifier.size(88.dp).clip(RoundedCornerShape(24.dp)),
+                        AboutIdentity()
+                        AboutVersionCard(build, ::copyInformation) { openLink(aboutBuildsAction.url) }
+                    }
+                    VerticalDivider(color = colors.outlineVariant)
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.weight(1f).fillMaxHeight().testTag("about_list"),
+                    contentPadding = PaddingValues(top = if (twoPane) 24.dp else 8.dp, bottom = 32.dp),
+                ) {
+                    if (!twoPane) {
+                        item(key = "identity") {
+                            AboutIdentity(horizontal = maxWidth >= 600.dp && fontScale <= 1.3f)
+                        }
+                        item(key = "build") {
+                            AboutVersionCard(build, ::copyInformation) { openLink(aboutBuildsAction.url) }
+                            Spacer(Modifier.height(AboutLayout.SectionGap))
+                        }
+                    }
+                    item(key = "project_heading") { AboutSectionHeading("Поддержка и проект") }
+                    items(aboutActions, key = { it.url }) { action ->
+                        AboutLinkRow(action.icon, action.title, action.description) { openLink(action.url) }
+                    }
+                    item(key = "credits") {
+                        AboutExpandRow(
+                            title = "Благодарности",
+                            subtitle = "Авторы и источники вдохновения",
+                            icon = Icons.Rounded.FavoriteBorder,
+                            expanded = creditsExpanded,
+                            onClick = { creditsExpanded = !creditsExpanded },
                         )
-                        Text("Glowpath", style = MaterialTheme.typography.headlineLarge)
-                        Text(
-                            "Твоя музыка, всегда с тобой",
-                            style = MaterialTheme.typography.bodyMedium,
-                            textAlign = TextAlign.Center,
-                        )
-                        Surface(
-                            color = colors.surface.copy(alpha = 0.72f),
-                            contentColor = colors.onSurface,
-                            shape = MaterialTheme.shapes.extraLarge,
-                            modifier = Modifier.padding(top = 4.dp),
-                        ) {
-                            Text(
-                                "${build.versionName} · ${build.variantLabel}",
-                                style = MaterialTheme.typography.labelLarge,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    }
+                    if (creditsExpanded) {
+                        item(key = "credits_origin") {
+                            AboutParagraph(
+                                "Первоначальный экран «О приложении» основан на Rhythm (GPL-3.0-or-later). Спасибо его авторам:",
+                                Modifier.animateItem(),
                             )
+                        }
+                        items(rhythmCredits, key = { it }) { AboutParagraph(it, Modifier.animateItem()) }
+                        item(key = "rhythm") {
+                            AboutLinkRow(Icons.Rounded.Code, "Проект Rhythm", "Исходный проект и его участники", Modifier.animateItem()) {
+                                openLink("https://github.com/cromaguy/Rhythm")
+                            }
+                        }
+                        item(key = "booming") {
+                            AboutLinkRow(Icons.Rounded.Album, "Проект Booming Music", "Вдохновение для раздела альбомов", Modifier.animateItem()) {
+                                openLink("https://github.com/mardous/BoomingMusic")
+                            }
+                        }
+                    }
+                    item(key = "device_heading") {
+                        HorizontalDivider(Modifier.padding(vertical = 16.dp), color = colors.outlineVariant)
+                        AboutSectionHeading("Техническая информация")
+                    }
+                    item(key = "device") {
+                        AboutExpandRow(
+                            title = "Устройство и совместимость",
+                            subtitle = "Android ${build.androidVersion} · API ${build.androidSdk}",
+                            icon = Icons.Rounded.PhoneAndroid,
+                            expanded = deviceExpanded,
+                            onClick = { deviceExpanded = !deviceExpanded },
+                        )
+                    }
+                    if (deviceExpanded) {
+                        val details = listOf(
+                            "Устройство" to build.device,
+                            "Архитектуры устройства" to build.deviceAbis,
+                            "Минимальный уровень Android API" to build.minSdk.toString(),
+                            "Целевой уровень Android API" to build.targetSdk.toString(),
+                            "Имя пакета" to build.packageName,
+                        )
+                        items(details, key = { it.first }) { (label, value) ->
+                            AboutDeviceValue(label, value, Modifier.animateItem())
                         }
                     }
                 }
             }
-            item(key = "build") {
-                AboutSection("Установленная версия") {
-                    AboutInfoRow(Icons.Rounded.Tag, "Код версии", build.versionCode.toString())
-                    AboutDivider()
-                    AboutInfoRow(Icons.Rounded.Build, "Сборка", build.buildLabel)
-                    AboutDivider()
-                    AboutInfoRow(Icons.Rounded.Code, "Ревизия кода", build.revisionLabel)
-                    FilledTonalButton(
-                        onClick = onCopyInfo,
-                        modifier = Modifier.fillMaxWidth().padding(12.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                    ) {
-                        Icon(Icons.Rounded.ContentCopy, null, Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Скопировать сведения", textAlign = TextAlign.Center)
-                    }
-                }
-            }
-            item(key = "device") {
-                AboutExpandableCard(
-                    title = "Устройство и совместимость",
-                    subtitle = "Android ${build.androidVersion} · API ${build.androidSdk}",
-                    icon = Icons.Rounded.PhoneAndroid,
-                    expanded = deviceExpanded,
-                    onClick = { deviceExpanded = !deviceExpanded },
-                ) {
-                    AboutInfoRow(Icons.Rounded.Smartphone, "Устройство", build.device)
-                    AboutInfoRow(Icons.Rounded.Memory, "Архитектуры устройства", build.deviceAbis)
-                    AboutInfoRow(Icons.Rounded.Android, "Минимальный уровень Android API", build.minSdk.toString())
-                    AboutInfoRow(Icons.Rounded.DeveloperMode, "Целевой уровень Android API", build.targetSdk.toString())
-                    AboutInfoRow(Icons.Rounded.Apps, "Имя пакета", build.packageName)
-                    Spacer(Modifier.height(8.dp))
-                }
-            }
-            item(key = "project") {
-                AboutSection("Проект") {
-                    aboutActions.forEachIndexed { index, action ->
-                        AboutLinkRow(action.icon, action.title, action.description) { onOpenUrl(action.url) }
-                        if (index < aboutActions.lastIndex) AboutDivider()
-                    }
-                }
-            }
-            item(key = "credits") {
-                AboutExpandableCard(
-                    title = "Благодарности",
-                    subtitle = "Авторы и источники вдохновения",
-                    icon = Icons.Rounded.FavoriteBorder,
-                    expanded = creditsExpanded,
-                    onClick = { creditsExpanded = !creditsExpanded },
-                ) {
-                    Column(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(
-                            "Первоначальный экран «О приложении» основан на Rhythm (GPL-3.0-or-later). Спасибо его авторам:",
-                            style = MaterialTheme.typography.bodyMedium,
-                        )
-                        rhythmCredits.forEach { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant) }
-                    }
-                    AboutLinkRow(Icons.Rounded.Code, "Проект Rhythm", "Исходный проект и его участники") {
-                        onOpenUrl("https://github.com/cromaguy/Rhythm")
-                    }
-                    AboutLinkRow(Icons.Rounded.Album, "Проект Booming Music", "Вдохновение для раздела альбомов") {
-                        onOpenUrl("https://github.com/mardous/BoomingMusic")
-                    }
-                }
-            }
-            item(key = "footer") {
-                Text(
-                    "Сделано для музыки. И для тебя.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
         }
     }
-}
-
-@Composable
-private fun AboutSection(title: String, content: @Composable ColumnScope.() -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.padding(start = 16.dp).semantics { heading() },
-        )
-        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-            Column(Modifier.fillMaxWidth(), content = content)
-        }
-    }
-}
-
-@Composable
-private fun AboutInfoRow(icon: ImageVector, label: String, value: String) {
-    ListItem(
-        headlineContent = { Text(value, style = MaterialTheme.typography.bodyLarge) },
-        overlineContent = { Text(label, style = MaterialTheme.typography.labelMedium) },
-        leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    )
-}
-
-@Composable
-private fun AboutLinkRow(icon: ImageVector, title: String, subtitle: String, onClick: () -> Unit) {
-    ListItem(
-        modifier = Modifier.clickable(onClick = onClick),
-        headlineContent = { Text(title, style = MaterialTheme.typography.titleSmall) },
-        supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodyMedium) },
-        leadingContent = { AboutLeadingIcon(icon) },
-        trailingContent = { Icon(Icons.Rounded.ArrowOutward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp)) },
-        colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-    )
-}
-
-@Composable
-private fun AboutExpandableCard(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
-    expanded: Boolean,
-    onClick: () -> Unit,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    val rotation by animateFloatAsState(if (expanded) 180f else 0f, label = "about_expand")
-    Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceContainerLow) {
-        Column {
-            ListItem(
-                modifier = Modifier.clickable(onClick = onClick).semantics {
-                    stateDescription = if (expanded) "Развёрнуто" else "Свёрнуто"
-                },
-                headlineContent = { Text(title, style = MaterialTheme.typography.titleSmall) },
-                supportingContent = { Text(subtitle, style = MaterialTheme.typography.bodyMedium) },
-                leadingContent = { AboutLeadingIcon(icon) },
-                trailingContent = { Icon(Icons.Rounded.ExpandMore, null, Modifier.rotate(rotation)) },
-                colors = ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-            )
-            AnimatedVisibility(expanded) { Column(content = content) }
-        }
-    }
-}
-
-@Composable
-private fun AboutLeadingIcon(icon: ImageVector) {
-    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
-        Icon(icon, null, Modifier.padding(10.dp).size(22.dp))
-    }
-}
-
-@Composable
-private fun AboutDivider() {
-    HorizontalDivider(Modifier.padding(start = 56.dp, end = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 }
