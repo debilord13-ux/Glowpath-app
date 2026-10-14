@@ -113,6 +113,7 @@ internal fun AboutScreenContent(
             // At large font scales or short landscape heights retain the single reading flow.
             val twoPane = maxWidth >= AboutLayout.ExpandedWidth && maxHeight >= 480.dp && fontScale <= 1.3f
             val pageInset = if (maxWidth >= 600.dp) 24.dp else 16.dp
+            val horizontalIdentity = maxWidth >= 600.dp && fontScale <= 1.3f
             Row(
                 Modifier.widthIn(max = if (twoPane) AboutLayout.MaxContentWidth else AboutLayout.ReadingWidth).fillMaxSize()
                     .padding(horizontal = pageInset),
@@ -137,7 +138,7 @@ internal fun AboutScreenContent(
                 ) {
                     if (!twoPane) {
                         item(key = "identity") {
-                            AboutIdentity(horizontal = maxWidth >= 600.dp && fontScale <= 1.3f)
+                            AboutIdentity(horizontal = horizontalIdentity)
                         }
                         item(key = "build") {
                             AboutVersionCard(build, ::copyInformation) { openLink(aboutBuildsAction.url) }
