@@ -15,7 +15,8 @@ data class Song(
     val isHidden: Boolean = false,  // для исключения из библиотеки без удаления
     val customTitle: String? = null,  // локально измененное название
     val customArtist: String? = null,  // локально измененный исполнитель
-    val customAlbumArtUri: Uri? = null  // локально измененная обложка
+    val customAlbumArtUri: Uri? = null,  // локально измененная обложка
+    val trackNumber: Int = 0, // MediaStore: disc * 1000 + track; zero for missing tags
 ) {
     // Возвращает отображаемое название (приоритет custom)
     fun displayTitle() = customTitle ?: title

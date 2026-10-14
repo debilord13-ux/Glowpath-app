@@ -433,7 +433,7 @@ fun MusicPlayerApp(
                 viewModel = viewModel,
                 onlineSearchViewModel = onlineSearchViewModel,
                 onSongClick = { song -> handleSongTap { viewModel.playSong(song) } },
-                onAlbumSongClick = { song -> handleSongTap { viewModel.playFromActiveQueue(song) } },
+                onAlbumPlaybackStarted = { if (settings.playerOpenMode == 0) navigateToPlayer() },
                 onSettingsClick = { navController.navigate("settings") },
                 bottomChromeHeight = bottomChromeHeight,
                 modifier = Modifier.fillMaxSize().then(
@@ -695,7 +695,7 @@ private fun RootTabsPager(
     viewModel: MusicViewModel,
     onlineSearchViewModel: OnlineSearchViewModel,
     onSongClick: (Song) -> Unit,
-    onAlbumSongClick: (Song) -> Unit,
+    onAlbumPlaybackStarted: () -> Unit,
     onSettingsClick: () -> Unit,
     bottomChromeHeight: Dp,
     modifier: Modifier = Modifier
@@ -724,7 +724,8 @@ private fun RootTabsPager(
 
                     "albums" -> AlbumsScreen(
                         viewModel = viewModel,
-                        onSongClick = onAlbumSongClick
+                        onPlaybackStarted = onAlbumPlaybackStarted,
+                        isActive = pagerState.currentPage == page,
                     )
 
                     else -> OnlineSearchScreen(

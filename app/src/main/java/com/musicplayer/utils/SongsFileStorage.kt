@@ -27,7 +27,7 @@ import java.io.FileWriter
 object SongsFileStorage {
 
     private const val FILE_NAME = "songs_db.json"
-    private const val VERSION   = 3  // увеличили версию для новых полей
+    private const val VERSION   = 4
 
     private fun getFile(context: Context): File =
         File(context.filesDir, FILE_NAME)
@@ -46,6 +46,7 @@ object SongsFileStorage {
                     put("t",   s.title)
                     put("ar",  s.artist)
                     put("al",  s.album)
+                    put("tr",  s.trackNumber)
                     put("dur", s.duration)
                     put("uri", s.uri.toString())
                     put("art", s.albumArtUri?.toString() ?: "")
@@ -82,6 +83,7 @@ object SongsFileStorage {
                     title      = o.getString("t"),
                     artist     = o.getString("ar"),
                     album      = o.getString("al"),
+                    trackNumber = o.optInt("tr", 0),
                     duration   = o.getLong("dur"),
                     uri        = Uri.parse(o.getString("uri")),
                     albumArtUri= SongCoverUri.forSong(

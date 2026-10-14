@@ -25,7 +25,7 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Test player and search interactions
+      - name: Test player and library interactions
         run: ./gradlew testDebugUnitTest --stacktrace
 
       - name: Upload UI check reports
@@ -36,6 +36,7 @@ jobs:
           path: |
             app/build/reports/tests/testDebugUnitTest/
             app/build/reports/search-preview/
+            app/build/reports/album-preview/
           if-no-files-found: ignore
 
       - name: Build signed Release + Debug APK

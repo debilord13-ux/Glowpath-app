@@ -21,10 +21,10 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.LibraryMusic
+import androidx.compose.material.icons.filled.Album
 import androidx.compose.material.icons.filled.TravelExplore
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.LibraryMusic
+import androidx.compose.material.icons.outlined.Album
 import androidx.compose.material.icons.outlined.TravelExplore
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -72,9 +72,9 @@ private val ExpressiveNavDestinations = listOf(
     ),
     ExpressiveNavDestination(
         route = "albums",
-        selectedIcon = Icons.Filled.LibraryMusic,
-        unselectedIcon = Icons.Outlined.LibraryMusic,
-        label = "Коллекции"
+        selectedIcon = Icons.Filled.Album,
+        unselectedIcon = Icons.Outlined.Album,
+        label = "Альбомы"
     ),
     ExpressiveNavDestination(
         route = "online_search",

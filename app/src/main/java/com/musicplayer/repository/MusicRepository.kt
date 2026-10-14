@@ -21,6 +21,7 @@ class MusicRepository(private val context: Context) {
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
             MediaStore.Audio.Media.ALBUM_ID,
+            MediaStore.Audio.Media.TRACK,
             MediaStore.Audio.Media.IS_MUSIC,
             MediaStore.Audio.Media.DATA
         )
@@ -42,6 +43,7 @@ class MusicRepository(private val context: Context) {
             val albumCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM)
             val durationCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.DURATION)
             val albumIdCol = cursor.getColumnIndexOrThrow(MediaStore.Audio.Media.ALBUM_ID)
+            val trackCol = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK)
             val dataCol = cursor.getColumnIndex(MediaStore.Audio.Media.DATA)
 
             while (cursor.moveToNext()) {
@@ -71,7 +73,8 @@ class MusicRepository(private val context: Context) {
                         duration = duration,
                         uri = uri,
                         albumArtUri = albumArtUri,
-                        folderPath = folderPath
+                        folderPath = folderPath,
+                        trackNumber = if (trackCol >= 0) cursor.getInt(trackCol) else 0,
                     )
                 )
             }
@@ -87,7 +90,8 @@ class MusicRepository(private val context: Context) {
             MediaStore.Audio.Media.ARTIST,
             MediaStore.Audio.Media.ALBUM,
             MediaStore.Audio.Media.DURATION,
-            MediaStore.Audio.Media.ALBUM_ID
+            MediaStore.Audio.Media.ALBUM_ID,
+            MediaStore.Audio.Media.TRACK,
         )
 
         context.contentResolver.query(uri, projection, null, null, null)?.use { cursor ->
@@ -106,7 +110,9 @@ class MusicRepository(private val context: Context) {
                     ) else null
                 )
 
-                return Song(id, title ?: "Песня", artist ?: "Неизвестный", album ?: "", duration, uri, albumArtUri)
+                val trackCol = cursor.getColumnIndex(MediaStore.Audio.Media.TRACK)
+                return Song(id, title ?: "Песня", artist ?: "Неизвестный", album ?: "", duration, uri, albumArtUri,
+                    trackNumber = if (trackCol >= 0) cursor.getInt(trackCol) else 0)
             }
         }
 

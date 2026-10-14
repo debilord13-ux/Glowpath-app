@@ -20,6 +20,7 @@ class PreferencesManager(context: Context) {
                 put("title",        song.title)
                 put("artist",       song.artist)
                 put("album",        song.album)
+                put("trackNumber",  song.trackNumber)
                 put("duration",     song.duration)
                 put("uri",          song.uri.toString())
                 put("albumArtUri",  song.albumArtUri?.toString() ?: "")
@@ -48,6 +49,7 @@ class PreferencesManager(context: Context) {
                     title       = obj.getString("title"),
                     artist      = obj.getString("artist"),
                     album       = obj.getString("album"),
+                    trackNumber = obj.optInt("trackNumber", 0),
                     duration    = obj.getLong("duration"),
                     uri         = Uri.parse(obj.getString("uri")),
                     albumArtUri = SongCoverUri.forSong(
