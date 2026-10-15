@@ -221,7 +221,8 @@ fun SettingsScreen(
                     onSort = { showSortSheet = true },
                     onShuffle = { viewModel.updateSettings(settings.copy(shuffleEnabled = !settings.shuffleEnabled)) },
                     onWavySeekBar = { viewModel.updateSettings(settings.copy(useWavySeekBar = !settings.useWavySeekBar)) },
-                    onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) }
+                    onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) },
+                    onColoredQueuePanel = { viewModel.updateSettings(settings.copy(coloredQueuePanel = !settings.coloredQueuePanel)) }
                 )
             }
 
@@ -328,6 +329,21 @@ fun SettingsScreen(
                     checked = settings.coloredPlayerButtons,
                     onCheckedChange = {
                         viewModel.updateSettings(settings.copy(coloredPlayerButtons = it))
+                    }
+                )
+                SettingsGroupDivider()
+                SettingsSwitchItem(
+                    icon = Icons.Rounded.QueueMusic,
+                    iconBg = MaterialTheme.colorScheme.secondary,
+                    title = "Панель очереди в цвет трека",
+                    subtitle = if (settings.coloredQueuePanel) {
+                        "Нижняя панель «Очередь» подкрашивается в оттенок обложки"
+                    } else {
+                        "Панель очереди использует цвета темы"
+                    },
+                    checked = settings.coloredQueuePanel,
+                    onCheckedChange = {
+                        viewModel.updateSettings(settings.copy(coloredQueuePanel = it))
                     }
                 )
                 SettingsGroupDivider()
@@ -606,7 +622,8 @@ private fun SettingsSearchResults(
     onSort: () -> Unit,
     onShuffle: () -> Unit,
     onWavySeekBar: () -> Unit,
-    onColoredButtons: () -> Unit
+    onColoredButtons: () -> Unit,
+    onColoredQueuePanel: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val entries = listOf(
@@ -622,6 +639,7 @@ private fun SettingsSearchResults(
         Triple("Перемешивание", "Случайный порядок треков", Icons.Rounded.Shuffle) to onShuffle,
         Triple("Волнистый ползунок", "Анимированный seek bar в плеере", Icons.Rounded.ShowChart) to onWavySeekBar,
         Triple("Кнопки в цвет трека", "Раскраска кнопок плеера под обложку", Icons.Rounded.Colorize) to onColoredButtons,
+        Triple("Панель очереди", "Подкраска панели очереди под цвет обложки", Icons.Rounded.QueueMusic) to onColoredQueuePanel,
         Triple("Статистика", "История прослушивания", Icons.Rounded.BarChart) to onStats,
         Triple("О приложении", "Glowpath и версия приложения", Icons.Rounded.Info) to onAbout
     )
