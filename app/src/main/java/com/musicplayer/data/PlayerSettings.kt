@@ -83,6 +83,7 @@ data class PlayerSettings(
     val lyricsOnCover: Boolean    = false,  // текст песни вместо обложки в плеере
     val useWavySeekBar: Boolean   = true,
     val coloredPlayerButtons: Boolean = true, // красить кнопки плеера под цвета обложки
+    val coloredQueuePanel: Boolean    = true, // красить панель очереди в другой оттенок обложки
 
     // ── Типографика ───────────────────────────────────────────────────────────
     val playerTitleSize: Float    = 22f,     // размер заголовка трека в плеере (sp)
