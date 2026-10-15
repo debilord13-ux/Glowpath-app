@@ -201,6 +201,27 @@ private fun queueAccentInk(vivid: Color): Color =
         lerp(vivid, Color.Black, 0.7f)
     }
 
+/**
+ * Панель очереди в цвет трека: берём «тёмный» конец градиента обложки — оттенок другой,
+ * не тот светлый, которым красятся кнопки плеера. Яркость выравнивается по яркости
+ * подложки темы, поэтому контраст текстов и иконок внутри панели не меняется.
+ */
+private fun deriveQueuePanelColor(gradient: List<Color>, base: Color): Color? {
+    if (gradient.isEmpty()) return null
+    val source = gradient.last()
+    val diff = base.luminance() - source.luminance()
+    val toneMatched = if (diff > 0f) lerp(source, Color.White, diff) else lerp(source, Color.Black, -diff)
+    // Мягкое смешивание: панель остаётся спокойной подложкой, а не ярким акцентом
+    return lerp(base, toneMatched, 0.45f)
+}
+
+/** Перекраска панели в такт кроссфейду фона (1000 мс), как у кнопок плеера. */
+@Composable
+private fun rememberQueuePanelColor(gradient: List<Color>, base: Color, enabled: Boolean): Color {
+    val target = if (enabled) deriveQueuePanelColor(gradient, base) ?: base else base
+    return animateColorAsState(target, tween(1000), label = "queue-panel-color").value
+}
+
 @Composable
 private fun rememberQueueReduceMotion(): Boolean {
     val resolver = LocalContext.current.contentResolver
@@ -368,6 +389,7 @@ fun PlayerQueueHost(
         label = "queue-accent",
     )
     val ink = queueAccentInk(vivid)
+    val panelColor = rememberQueuePanelColor(gradientColors, colors.surfaceContainerHigh, settings.coloredQueuePanel)
 
     BackHandler(enabled = sheetState.bottomSheetState.currentValue == SheetValue.Expanded) {
         scope.launch { sheetState.bottomSheetState.partialExpand() }
@@ -406,7 +428,7 @@ fun PlayerQueueHost(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .windowInsetsBottomHeight(WindowInsets.navigationBars)
-                .background(colors.surfaceContainerHigh),
+                .background(panelColor),
         )
 
         Box(
@@ -421,7 +443,7 @@ fun PlayerQueueHost(
             scaffoldState = sheetState,
             sheetPeekHeight = PlayerQueuePeekHeight,
             sheetShape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            sheetContainerColor = colors.surfaceContainerHigh,
+            sheetContainerColor = panelColor,
             sheetShadowElevation = 0.dp,
             containerColor = Color.Transparent,
             sheetDragHandle = {
@@ -437,6 +459,7 @@ fun PlayerQueueHost(
                         isPlaying = isPlaying,
                         vivid = vivid,
                         ink = ink,
+                        panelColor = panelColor,
                         display = display,
                         onExpand = { scope.launch { sheetState.bottomSheetState.expand() } },
                         onTogglePlayback = { viewModel.togglePlayPause() },
@@ -745,6 +768,7 @@ private fun PlayerQueueSheetContent(
     isPlaying: Boolean,
     vivid: Color,
     ink: Color,
+    panelColor: Color,
     display: (Song) -> QueueDisplay,
     onExpand: () -> Unit,
     onTogglePlayback: () -> Unit,
@@ -965,14 +989,14 @@ private fun PlayerQueueSheetContent(
                                     haptics.performHapticFeedback(HapticFeedbackType.Confirm)
                                 },
                                 modifier = Modifier
-                                    .background(colors.surfaceContainerHigh)
+                                    .background(panelColor)
                                     .padding(horizontal = 8.dp)
                                     .clip(RoundedCornerShape(16.dp))
                                     .background(
                                         if (index == currentIndex) {
-                                            vivid.copy(alpha = 0.12f).compositeOver(colors.surfaceContainerHigh)
+                                            vivid.copy(alpha = 0.12f).compositeOver(panelColor)
                                         } else {
-                                            colors.surfaceContainerHigh
+                                            panelColor
                                         },
                                     ),
                             )
