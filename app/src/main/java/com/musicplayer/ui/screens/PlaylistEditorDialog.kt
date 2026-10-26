@@ -96,6 +96,22 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlin.math.roundToInt
 
+/** Режим сортировки, общий и для списка библиотеки снизу, и для порядка треков плейлиста сверху. */
+private enum class EditorSortMode {
+    TITLE,
+    RECENT,
+    ARTIST,
+}
+
+private fun sortEditorSongs(list: List<Song>, mode: EditorSortMode): List<Song> = when (mode) {
+    EditorSortMode.TITLE  -> list.sortedBy { it.displayTitle().lowercase() }
+    EditorSortMode.RECENT -> list.sortedByDescending { it.id }
+    EditorSortMode.ARTIST -> list.sortedWith(
+        compareBy<Song> { it.displayArtist().lowercase() }
+            .thenBy { it.displayTitle().lowercase() }
+    )
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PlaylistEditorDialog(
@@ -137,20 +153,22 @@ fun PlaylistEditorDialog(
         mutableStateOf(initialCoverSongId?.takeIf { it in initialSelection } ?: initialSelection.firstOrNull())
     }
     var customCoverUri by remember(title, initialCustomCoverUri) { mutableStateOf(initialCustomCoverUri) }
-    var motionCoverUri by remember(title) { mutableStateOf<String?>(null) }
+    var motionCoverUri by remember(title, initialMotionCoverUri) { mutableStateOf(initialMotionCoverUri) }
     var isPinned by remember(title, initialPinned) { mutableStateOf(initialPinned) }
     var showSelectedOnly by remember(title) { mutableStateOf(false) }
     var coverMessage by remember(title) { mutableStateOf<String?>(null) }
+    // Активный режим сортировки: применяется и к списку снизу, и к порядку треков плейлиста (полоса обложки сверху)
+    var sortMode by remember(title) { mutableStateOf(EditorSortMode.TITLE) }
 
     val selectedSongs = remember(selectedSongIds, songMap) {
         selectedSongIds.mapNotNull(songMap::get)
     }
     val totalDurationMs = remember(selectedSongs) { selectedSongs.sumOf { it.duration } }
-    val visibleSongs = remember(songs, selectedSongs, query, showSelectedOnly) {
+    val visibleSongs = remember(songs, selectedSongs, query, showSelectedOnly, sortMode) {
         when {
-            showSelectedOnly -> selectedSongs
-            query.isBlank() -> songs.sortedBy { it.title.lowercase() }
-            else -> viewModel.searchLibrary(query, limit = 240)
+            showSelectedOnly -> sortEditorSongs(selectedSongs, sortMode)
+            query.isBlank() -> sortEditorSongs(songs, sortMode)
+            else -> sortEditorSongs(viewModel.searchLibrary(query, limit = 240), sortMode)
         }
     }
 
@@ -181,16 +199,9 @@ fun PlaylistEditorDialog(
         }
     }
 
-    fun sortSelection(selector: (Song) -> String) {
-        selectedSongIds = selectedSongs
-            .sortedBy { selector(it).lowercase() }
-            .map { it.id }
-    }
-
-    fun reorderRecent() {
-        selectedSongIds = selectedSongs
-            .sortedByDescending { it.id }
-            .map { it.id }
+    /** Пересобирает порядок выбранных треков (полоса обложки сверху) в соответствии с режимом сортировки. */
+    fun reorderSelection(mode: EditorSortMode) {
+        selectedSongIds = sortEditorSongs(selectedSongs, mode).map { it.id }
     }
 
     Dialog(
@@ -240,7 +251,7 @@ fun PlaylistEditorDialog(
                                         selectedSongIds,
                                         coverSongId,
                                         customCoverUri,
-                                        null,
+                                        motionCoverUri,
                                         isPinned
                                     )
                                 },
@@ -452,7 +463,10 @@ fun PlaylistEditorDialog(
                                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     item {
                                         EditorActionChip(Icons.Rounded.CheckCircle, "Выбрать всё") {
-                                            selectedSongIds = songs.sortedBy { it.title.lowercase() }.map { it.id }
+                                            // Добавляем все видимые (с учётом поиска/фильтра) треки,
+                                            // сохраняя уже выбранный порядок, а новые — в порядке текущей сортировки
+                                            val missing = visibleSongs.map { it.id }.filterNot { it in selectedSongIds }
+                                            selectedSongIds = selectedSongIds + missing
                                         }
                                     }
                                     item {
@@ -461,18 +475,30 @@ fun PlaylistEditorDialog(
                                         }
                                     }
                                     item {
-                                        EditorActionChip(Icons.Rounded.SortByAlpha, "A-Z") {
-                                            sortSelection { it.title }
+                                        EditorActionChip(
+                                            Icons.Rounded.SortByAlpha,
+                                            if (sortMode == EditorSortMode.TITLE) "A-Z ✓" else "A-Z"
+                                        ) {
+                                            sortMode = EditorSortMode.TITLE
+                                            reorderSelection(EditorSortMode.TITLE)
                                         }
                                     }
                                     item {
-                                        EditorActionChip(Icons.Rounded.MoreTime, "Недавние") {
-                                            reorderRecent()
+                                        EditorActionChip(
+                                            Icons.Rounded.MoreTime,
+                                            if (sortMode == EditorSortMode.RECENT) "Недавние ✓" else "Недавние"
+                                        ) {
+                                            sortMode = EditorSortMode.RECENT
+                                            reorderSelection(EditorSortMode.RECENT)
                                         }
                                     }
                                     item {
-                                        EditorActionChip(Icons.Rounded.Tune, "По артисту") {
-                                            sortSelection { it.artist }
+                                        EditorActionChip(
+                                            Icons.Rounded.Tune,
+                                            if (sortMode == EditorSortMode.ARTIST) "По артисту ✓" else "По артисту"
+                                        ) {
+                                            sortMode = EditorSortMode.ARTIST
+                                            reorderSelection(EditorSortMode.ARTIST)
                                         }
                                     }
                                     item {
@@ -567,7 +593,7 @@ fun PlaylistEditorDialog(
                                     selectedSongIds,
                                     coverSongId,
                                     customCoverUri,
-                                    null,
+                                    motionCoverUri,
                                     isPinned
                                 )
                             },
@@ -698,6 +724,15 @@ private fun EditorActionChip(
         Text(label, fontFamily = font, fontSize = 12.sp)
     }
 }
+
+/*
+ * Поведение панели действий редактора плейлиста:
+ * — «Выбрать всё» добавляет все видимые треки (с учётом поиска), сохраняя текущий порядок выбора;
+ * — «Очистить» снимает выбор полностью (пустой плейлист и пустая полоса обложки);
+ * — «A-Z» / «Недавние» / «По артисту» задают общий режим сортировки:
+ *      1) пересортируют список библиотеки снизу,
+ *      2) пересортируют порядок треков плейлиста (полоса «Трек для основной обложки» сверху).
+ */
 
 @Composable
 private fun PlaylistEditorCoverPreview(
