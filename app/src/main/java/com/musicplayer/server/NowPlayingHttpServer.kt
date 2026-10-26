@@ -336,7 +336,7 @@ class NowPlayingHttpServer(
                     "Playlist has no cover"
                 ).withCors()
             val bytes = context.contentResolver.openInputStream(artworkUri)?.use { it.readBytes() }
-            if (bytes.isNullOrEmpty()) {
+            if (bytes == null || bytes.isEmpty()) {
                 return newFixedLengthResponse(
                     Response.Status.NOT_FOUND,
                     MIME_PLAINTEXT,
