@@ -46,7 +46,7 @@ jobs:
           GLOWPATH_KEYSTORE_PATH: ${{ runner.temp }}/glowpath-release.keystore
           GLOWPATH_KEYSTORE_PASSWORD: ${{ secrets.GLOWPATH_KEYSTORE_PASSWORD }}
           GLOWPATH_KEY_ALIAS: glowpath-release
-          GLOWPATH_KEY_PASSWORD: ${{ secrets.GLOWPATH_KEY_PASSWORD }}
+          GLOWPATH_KEY_PASSWORD: ${{ secrets.GLOWPATH_KEYSTORE_PASSWORD }}
         run: ./gradlew assembleRelease --stacktrace
 
       - name: Upload Release APK
