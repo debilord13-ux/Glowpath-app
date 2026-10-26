@@ -583,6 +583,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return uris.mapNotNull { songsByUri[it] }
     }
 
+    /**
+     * Активный список воспроизведения.
+     *
+     * Если запущена явная очередь (плейлист / альбом / собранная очередь) — возвращается
+     * именно она в своём порядке, иначе вся отсортированная библиотека.
+     * ВСЕ навигационные пути (next / prev / shuffle / кроссфейд / свайп обложки / лист очереди)
+     * обязаны использовать один и тот же список, чтобы shuffle и repeat не выпадали
+     * из плейлиста в общую библиотеку.
+     */
+    private fun activePlaybackSongs(): List<Song> {
+        val explicit = resolveBridgeQueueSongs()
+        return if (explicit.isNotEmpty()) explicit else sortedVisibleSongs(getVisibleSongs())
+    }
+
     private fun bridgeQueueRelative(step: Int): Song? {
         val current = _currentSong.value ?: return null
         val queue = resolveBridgeQueueSongs()
@@ -596,6 +610,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun clearBridgeQueue() {
         _bridgeQueueUris.value = emptyList()
+        // Очередь сброшена — индексы shuffle, построенные по прежней очереди, больше невалидны
+        resetShuffleState()
     }
 
     fun buildActiveQueueSnapshot(): List<Song> {
@@ -623,13 +639,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     fun playerQueue(): PlayerQueue {
         val current = _currentSong.value
-        val sorted = sortedVisibleSongs(getVisibleSongs())
+        val sorted = activePlaybackSongs()
         if (_settings.value.shuffleEnabled && current != null && sorted.size > 1) {
             normalizeShuffleUpcoming(sorted, current)
             return PlayerQueue(listOf(current) + shuffleRemaining.map { sorted[it] }, 0, true)
         }
-        val explicit = resolveBridgeQueueSongs()
-        val list = if (explicit.isNotEmpty()) explicit else sorted
+        val list = sorted
         return PlayerQueue(list, list.indexOfFirst { it.uri == current?.uri }, false)
     }
 
@@ -641,7 +656,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         if (queue.shuffled) {
-            val sorted = sortedVisibleSongs(getVisibleSongs())
+            // Тот же индексный пространство, на котором построен playerQueue():
+            // явная очередь (плейлист) или вся библиотека — но никогда не смешивать их.
+            val sorted = activePlaybackSongs()
             val targetIndex = sorted.indexOfFirst { it.id == target.id }
             if (targetIndex < 0) return
             val position = shuffleRemaining.indexOf(targetIndex)
@@ -709,6 +726,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val queue = songs.distinctBy { it.uri.toString() }
         if (queue.isEmpty()) return
         val safeIndex = startIndex.coerceIn(0, queue.lastIndex)
+        // Новая очередь (плейлист/альбом): старое shuffle-состояние построено по
+        // прежнему списку и невалидно — сбрасываем, чтобы shuffle работал внутри новой очереди
+        resetShuffleState()
         setBridgeQueueFromSongs(queue)
         playSong(queue[safeIndex], preserveBridgeQueue = true)
     }
@@ -739,6 +759,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun resolveUserAlbumSongs(albumId: String): List<Song> {
         val album = _userAlbums.value.firstOrNull { it.id == albumId } ?: return emptyList()
         return resolveSongsByIds(album.songIds)
+    }
+
+    /**
+     * Запуск плейлиста по id (для bridge-команд и HTTP API).
+     * Очередь = ровно треки плейлиста, shuffle/repeat работают внутри неё.
+     * @return true, если плейлист найден и запуск произошёл.
+     */
+    fun playPlaylistById(playlistId: String): Boolean {
+        if (playlistId.isBlank()) return false
+        val album = _userAlbums.value.firstOrNull { it.id == playlistId } ?: return false
+        val songs = resolveSongsByIds(album.songIds)
+        if (songs.isEmpty()) return false
+        playQueue(songs, 0)
+        return true
     }
 
     fun createUserAlbum(
@@ -1143,10 +1177,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 // предыдущий трек здесь тоже.
                 rememberPreviousTrack(swappedToSong)
                 _currentSong.value  = swappedToSong
-                val list = sortedVisibleSongs(getVisibleSongs())
+                // Индекс и «съедание» shuffle-очереди считаем в активном списке
+                // (плейлист, если он запущен, иначе библиотека) — иначе кроссфейд
+                // рассинхронизирует shuffle с плейлистом.
+                val list = activePlaybackSongs()
                 val idx = list.indexOfFirst { it.id == swappedToSong.id }
                 if (idx >= 0) {
-                    _currentIndex.value = idx
+                    if (resolveBridgeQueueSongs().isEmpty()) {
+                        _currentIndex.value = idx
+                    }
                     // Кроссфейд не проходит через playNext(), поэтому «съедаем» трек из
                     // shuffle-очереди здесь. Иначе он оставался первым в очереди, и
                     // кнопка «Следующий» запускала ту же самую песню заново.
@@ -1172,29 +1211,25 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Следующий трек без запуска playback — для планирования кроссфейда. */
     private fun peekNextSong(currentSong: Song): Song? {
-        if (!_settings.value.shuffleEnabled) {
-            bridgeQueueRelative(1)?.let { return it }
-        }
-
-        val visible = getVisibleSongs()
-        if (visible.isEmpty()) return null
+        // Работаем строго в активном списке (плейлист или библиотека),
+        // чтобы кроссфейд не уводил воспроизведение за пределы плейлиста.
+        val active = activePlaybackSongs()
+        if (active.isEmpty()) return null
 
         if (_settings.value.shuffleEnabled) {
-            val shuffled = sortedVisibleSongs(visible)
-            if (shuffled.size < 2) return currentSong
+            if (active.size < 2) return currentSong
             // Используем ту же очередь, что и playNext()/playerQueue(): трек, к которому
             // готовится кроссфейд, и трек, который выберет кнопка «Следующий», совпадают.
-            normalizeShuffleUpcoming(shuffled, currentSong)
-            return shuffleRemaining.firstOrNull()?.let { shuffled.getOrNull(it) } ?: currentSong
+            normalizeShuffleUpcoming(active, currentSong)
+            return shuffleRemaining.firstOrNull()?.let { active.getOrNull(it) } ?: currentSong
         }
 
-        val sorted = sortedVisibleSongs(visible)
-        val idx = sorted.indexOfFirst { it.id == currentSong.id }.takeIf { it >= 0 }
-            ?: _currentIndex.value.coerceIn(0, (sorted.size - 1).coerceAtLeast(0))
+        val idx = active.indexOfFirst { it.id == currentSong.id }.takeIf { it >= 0 }
+            ?: _currentIndex.value.coerceIn(0, (active.size - 1).coerceAtLeast(0))
         return when (_settings.value.repeatMode) {
             RepeatMode.ONE -> currentSong
-            RepeatMode.ALL -> sorted.getOrNull((idx + 1) % sorted.size)
-            RepeatMode.NONE -> sorted.getOrNull(idx + 1)
+            RepeatMode.ALL -> active.getOrNull((idx + 1) % active.size)
+            RepeatMode.NONE -> active.getOrNull(idx + 1)
         }
     }
 
@@ -1492,10 +1527,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playerNeighbour(forward: Boolean): Song? {
         val current = _currentSong.value ?: return null
         if (!forward && _currentPosition.value > 3000L) return null
-        if (!_settings.value.shuffleEnabled) {
-            bridgeQueueRelative(if (forward) 1 else -1)?.let { return it }
-        }
-        val sorted = sortedVisibleSongs(getVisibleSongs())
+        // Свайп обложки листает тот же активный список, что и кнопки next/prev:
+        // плейлист, если он запущен, иначе библиотеку.
+        val sorted = activePlaybackSongs()
         if (sorted.size < 2) return null
         val index = sorted.indexOfFirst { it.id == current.id }.takeIf { it >= 0 }
             ?: _currentIndex.value.coerceIn(0, sorted.lastIndex)
@@ -1513,10 +1547,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun playNext() {
+        val queueActive = resolveBridgeQueueSongs().isNotEmpty()
+
+        // Без shuffle: явная очередь (плейлист) листается по порядку — по кругу, доиграв до конца.
         if (!_settings.value.shuffleEnabled) bridgeQueueRelative(1)?.let { nextSong ->
             val sorted = getSortedSongs()
             _currentIndex.value = sorted.indexOf(nextSong).takeIf { it >= 0 } ?: _songs.value.indexOf(nextSong)
             playSong(nextSong, preserveBridgeQueue = true)
+            return
+        }
+
+        // Явная очередь (плейлист) активна — навигация строго внутри неё,
+        // и в shuffle, и в обычном режиме. Библиотека не подмешивается.
+        if (queueActive) {
+            val queue = resolveBridgeQueueSongs()
+            if (queue.isEmpty()) return
+            val currentIdx = queue.indexOfFirst { it.uri == _currentSong.value?.uri }
+            val nextIdx = if (_settings.value.shuffleEnabled) {
+                getNextShuffleIndex(currentIdx.coerceAtLeast(0), queue.size)
+            } else {
+                when {
+                    currentIdx < 0 -> 0
+                    currentIdx + 1 < queue.size -> currentIdx + 1
+                    else -> 0 // конец плейлиста — идём по кругу (для repeat ALL и ручного next)
+                }
+            }
+            val nextSong = queue[nextIdx]
+            val libSorted = getSortedSongs()
+            _currentIndex.value = libSorted.indexOf(nextSong).takeIf { it >= 0 } ?: _songs.value.indexOf(nextSong)
+            startPlayback(nextSong)
             return
         }
 
@@ -1570,13 +1629,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        val sorted = sortedVisibleSongs(getVisibleSongs())
+        // В том числе при включённом shuffle предыдущий трек берётся из активного
+        // списка (плейлиста, если он запущен), а не из всей библиотеки.
+        val sorted = activePlaybackSongs()
         if (sorted.isEmpty()) return
         val currentIndex = sorted.indexOfFirst { it.id == _currentSong.value?.id }
             .takeIf { it >= 0 }
             ?: _currentIndex.value.coerceIn(0, sorted.lastIndex)
         val previousIndex = if (currentIndex <= 0) sorted.lastIndex else currentIndex - 1
-        _currentIndex.value = previousIndex
+        if (resolveBridgeQueueSongs().isEmpty()) {
+            _currentIndex.value = previousIndex
+        }
         startPlayback(sorted[previousIndex])
     }
 
@@ -1618,7 +1681,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             RepeatMode.ONE  -> { mediaPlayer?.seekTo(0); mediaPlayer?.start(); startProgressTracking() }
             RepeatMode.ALL  -> playNext()
             RepeatMode.NONE -> {
-                if (bridgeQueueRelative(1) != null || _currentIndex.value < getVisibleSongs().size - 1) {
+                // При активной очереди (плейлисте) доигрывание останавливается на её последнем
+                // треке, а не улетает играть дальше всю библиотеку.
+                // В плейлисте с shuffle учитываем ещё и не догрызенную shuffle-очередь:
+                // последовательный «следующий» мог уже закончиться, а случайный — нет.
+                val queueActive = resolveBridgeQueueSongs().isNotEmpty()
+                val hasMore = if (queueActive) {
+                    bridgeQueueRelative(1) != null ||
+                        (_settings.value.shuffleEnabled && shuffleRemaining.isNotEmpty())
+                } else {
+                    // Библиотека — прежняя логика остановки по индексу
+                    _currentIndex.value < getVisibleSongs().size - 1
+                }
+                if (hasMore) {
                     playNext()
                 } else {
                     _isPlaying.value       = false
