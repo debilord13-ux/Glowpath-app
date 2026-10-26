@@ -24,6 +24,7 @@ object ExteraGramBridgeContract {
     const val TYPE_STOP = "stop"
     const val TYPE_SEARCH_ONLINE = "search_online"
     const val TYPE_PLAY_LIBRARY_QUERY = "play_library_query"
+    const val TYPE_PLAY_PLAYLIST = "play_playlist"
     const val TYPE_OPEN_LYRICS_QUERY = "open_lyrics_query"
     const val TYPE_IMPORT_URI = "import_uri"
     const val TYPE_IMPORT_AND_PLAY_URI = "import_and_play_uri"
@@ -46,6 +47,17 @@ object ExteraGramBridgeContract {
         Uri.parse("content://$AUTHORITY/search").buildUpon()
             .appendQueryParameter("q", query)
             .build()
+
+    /** Список всех пользовательских плейлистов. */
+    fun playlistsUri(): Uri = Uri.parse("content://$AUTHORITY/playlists")
+
+    /** Песни конкретного плейлиста (в порядке добавления). */
+    fun playlistSongsUri(playlistId: String): Uri =
+        Uri.parse("content://$AUTHORITY/playlists/$playlistId/songs")
+
+    /** Обложка плейлиста (файл-стрим). */
+    fun playlistCoverUri(playlistId: String): Uri =
+        Uri.parse("content://$AUTHORITY/playlists/$playlistId/cover")
 }
 
 data class ExteraGramBridgeCommand(
@@ -249,6 +261,7 @@ fun bridgeCommandLabel(command: ExteraGramBridgeCommand): String {
         ExteraGramBridgeContract.TYPE_STOP -> "Остановка"
         ExteraGramBridgeContract.TYPE_SEARCH_ONLINE -> "Онлайн поиск: ${command.query}"
         ExteraGramBridgeContract.TYPE_PLAY_LIBRARY_QUERY -> "Играть из библиотеки: ${command.query}"
+        ExteraGramBridgeContract.TYPE_PLAY_PLAYLIST -> "Запуск плейлиста: ${command.payload.ifBlank { command.query }}"
         ExteraGramBridgeContract.TYPE_OPEN_LYRICS_QUERY -> "Открыть lyrics для: ${command.query}"
         ExteraGramBridgeContract.TYPE_IMPORT_URI -> "Импорт аудио из ExteraGram"
         ExteraGramBridgeContract.TYPE_IMPORT_AND_PLAY_URI -> "Импорт и запуск аудио"

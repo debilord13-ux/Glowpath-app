@@ -7,10 +7,8 @@ import android.database.Cursor
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.ParcelFileDescriptor
-import com.musicplayer.data.PreferencesManager
 import com.musicplayer.data.Song
-import com.musicplayer.utils.SongsFileStorage
-import kotlinx.coroutines.runBlocking
+import com.musicplayer.data.UserAlbum
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
@@ -21,11 +19,19 @@ class ExteraGramBridgeProvider : ContentProvider() {
         private const val STATUS = 1
         private const val SEARCH = 2
         private const val COVER_CURRENT = 3
+        private const val PLAYLISTS = 4
+        private const val PLAYLIST_SONGS = 5
+        private const val PLAYLIST_COVER = 6
+        private const val PLAYLIST_DETAIL = 7
 
         private val matcher = UriMatcher(UriMatcher.NO_MATCH).apply {
             addURI(ExteraGramBridgeContract.AUTHORITY, "status", STATUS)
             addURI(ExteraGramBridgeContract.AUTHORITY, "search", SEARCH)
             addURI(ExteraGramBridgeContract.AUTHORITY, "cover/current", COVER_CURRENT)
+            addURI(ExteraGramBridgeContract.AUTHORITY, "playlists", PLAYLISTS)
+            addURI(ExteraGramBridgeContract.AUTHORITY, "playlists/*", PLAYLIST_DETAIL)
+            addURI(ExteraGramBridgeContract.AUTHORITY, "playlists/*/songs", PLAYLIST_SONGS)
+            addURI(ExteraGramBridgeContract.AUTHORITY, "playlists/*/cover", PLAYLIST_COVER)
         }
 
         private val statusColumns = arrayOf(
@@ -56,6 +62,29 @@ class ExteraGramBridgeProvider : ContentProvider() {
             "duration_ms",
             "uri",
             "score",
+        )
+
+        private val playlistsColumns = arrayOf(
+            "playlist_id",
+            "name",
+            "description",
+            "song_count",
+            "total_duration_ms",
+            "is_pinned",
+            "created_at",
+            "updated_at",
+            "cover_uri",
+        )
+
+        private val playlistSongsColumns = arrayOf(
+            "track_index",
+            "song_id",
+            "title",
+            "artist",
+            "album",
+            "duration_ms",
+            "uri",
+            "cover_uri",
         )
 
     }
@@ -120,6 +149,85 @@ class ExteraGramBridgeProvider : ContentProvider() {
                 }
             }
 
+            PLAYLISTS -> {
+                val songsById = ExteraGramBridgeLibrary.loadSongs(context).associateBy { it.id }
+                MatrixCursor(playlistsColumns).apply {
+                    ExteraGramBridgeLibrary.loadPlaylists(context)
+                        .sortedWith(
+                            compareByDescending<UserAlbum> { it.isPinned }
+                                .thenBy { it.name.lowercase() }
+                        )
+                        .forEach { playlist ->
+                            val tracks = playlist.songIds.mapNotNull { songsById[it] }
+                            val coverUri = ExteraGramBridgeLibrary
+                                .resolvePlaylistCoverUri(context, playlist, tracks)
+                            addRow(
+                                arrayOf(
+                                    playlist.id,
+                                    playlist.name,
+                                    playlist.description,
+                                    tracks.size,
+                                    tracks.sumOf { it.duration },
+                                    if (playlist.isPinned) 1 else 0,
+                                    playlist.createdAt,
+                                    playlist.updatedAt,
+                                    coverUri?.toString().orEmpty(),
+                                )
+                            )
+                        }
+                }
+            }
+
+            PLAYLIST_SONGS, PLAYLIST_DETAIL -> {
+                val playlistId = extractPlaylistId(uri)
+                val resolved = playlistId?.let { ExteraGramBridgeLibrary.resolvePlaylist(context, it) }
+                when {
+                    resolved == null -> MatrixCursor(playlistsColumns)
+                    matcher.match(uri) == PLAYLIST_SONGS -> {
+                        val tracks = resolved.second
+                        val prefs = com.musicplayer.data.PreferencesManager(context)
+                        MatrixCursor(playlistSongsColumns).apply {
+                            tracks.forEachIndexed { index, song ->
+                                val cover = prefs.loadCustomArt(song.id) ?: song.albumArtUri
+                                addRow(
+                                    arrayOf(
+                                        index,
+                                        song.id,
+                                        song.title,
+                                        song.artist,
+                                        song.album,
+                                        song.duration,
+                                        song.uri.toString(),
+                                        cover?.toString().orEmpty(),
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    else -> {
+                        // Метаданные конкретного плейлиста — одна строка с колонками списка плейлистов
+                        val (playlist, tracks) = resolved
+                        val coverUri = ExteraGramBridgeLibrary
+                            .resolvePlaylistCoverUri(context, playlist, tracks)
+                        MatrixCursor(playlistsColumns).apply {
+                            addRow(
+                                arrayOf(
+                                    playlist.id,
+                                    playlist.name,
+                                    playlist.description,
+                                    tracks.size,
+                                    tracks.sumOf { it.duration },
+                                    if (playlist.isPinned) 1 else 0,
+                                    playlist.createdAt,
+                                    playlist.updatedAt,
+                                    coverUri?.toString().orEmpty(),
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+
             else -> null
         }
     }
@@ -128,22 +236,48 @@ class ExteraGramBridgeProvider : ContentProvider() {
         return when (matcher.match(uri)) {
             STATUS -> "vnd.android.cursor.item/vnd.${ExteraGramBridgeContract.AUTHORITY}.status"
             SEARCH -> "vnd.android.cursor.dir/vnd.${ExteraGramBridgeContract.AUTHORITY}.search"
-            COVER_CURRENT -> "image/*"
+            PLAYLISTS, PLAYLIST_DETAIL -> "vnd.android.cursor.dir/vnd.${ExteraGramBridgeContract.AUTHORITY}.playlist"
+            PLAYLIST_SONGS -> "vnd.android.cursor.dir/vnd.${ExteraGramBridgeContract.AUTHORITY}.playlist_song"
+            COVER_CURRENT, PLAYLIST_COVER -> "image/*"
             else -> null
         }
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor? {
         val context = context ?: return null
-        if (matcher.match(uri) != COVER_CURRENT) return null
+        return when (matcher.match(uri)) {
+            COVER_CURRENT -> {
+                val snapshot = ExteraGramBridgeStateStore.loadSnapshot(context)
+                val artworkUri = resolveCurrentArtworkUri(context, snapshot)
+                    ?: throw FileNotFoundException("No current artwork available")
+                val artworkFile = exposeArtworkFile(context, artworkUri, "current_cover.bin")
+                    ?: throw FileNotFoundException("Failed to expose current artwork")
+                ParcelFileDescriptor.open(artworkFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
+            PLAYLIST_COVER -> {
+                val playlistId = extractPlaylistId(uri)
+                    ?: throw FileNotFoundException("No playlist id in uri")
+                val resolved = ExteraGramBridgeLibrary.resolvePlaylist(context, playlistId)
+                    ?: throw FileNotFoundException("Playlist not found")
+                val (playlist, tracks) = resolved
+                val artworkUri = ExteraGramBridgeLibrary.resolvePlaylistCoverUri(context, playlist, tracks)
+                    ?: throw FileNotFoundException("Playlist has no cover")
+                val artworkFile = exposeArtworkFile(context, artworkUri, "playlist_${playlistId.hashCode()}_cover.bin")
+                    ?: throw FileNotFoundException("Failed to expose playlist artwork")
+                ParcelFileDescriptor.open(artworkFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            }
+            else -> null
+        }
+    }
 
-        val snapshot = ExteraGramBridgeStateStore.loadSnapshot(context)
-        val artworkUri = resolveCurrentArtworkUri(context, snapshot)
-            ?: throw FileNotFoundException("No current artwork available")
-        val artworkFile = exposeArtworkFile(context, artworkUri)
-            ?: throw FileNotFoundException("Failed to expose current artwork")
-
-        return ParcelFileDescriptor.open(artworkFile, ParcelFileDescriptor.MODE_READ_ONLY)
+    private fun extractPlaylistId(uri: Uri): String? {
+        val segments = uri.pathSegments
+        val index = segments.indexOf("playlists")
+        if (index >= 0 && index + 1 < segments.size) {
+            val next = segments[index + 1]
+            if (next != "songs" && next != "cover") return next
+        }
+        return uri.getQueryParameter("id")
     }
 
     override fun insert(uri: Uri, values: ContentValues?): Uri? = null
@@ -158,9 +292,7 @@ class ExteraGramBridgeProvider : ContentProvider() {
     ): Int = 0
 
     private fun findSongs(context: android.content.Context, query: String): List<Pair<Song, Int>> {
-        val allSongs = runBlocking {
-            SongsFileStorage.load(context)
-        } ?: PreferencesManager(context).loadSongs()
+        val allSongs = ExteraGramBridgeLibrary.loadSongs(context)
 
         if (allSongs.isEmpty()) return emptyList()
         val needle = query.lowercase()
@@ -187,7 +319,7 @@ class ExteraGramBridgeProvider : ContentProvider() {
     }
 
     private fun resolveCurrentSong(context: android.content.Context, snapshot: ExteraGramBridgeSnapshot): Song? {
-        val allSongs = runBlocking { SongsFileStorage.load(context) } ?: PreferencesManager(context).loadSongs()
+        val allSongs = ExteraGramBridgeLibrary.loadSongs(context)
         if (allSongs.isEmpty()) return null
         return allSongs.firstOrNull { it.uri.toString() == snapshot.currentUri }
             ?: allSongs.firstOrNull {
@@ -198,13 +330,13 @@ class ExteraGramBridgeProvider : ContentProvider() {
 
     private fun resolveCurrentArtworkUri(context: android.content.Context, snapshot: ExteraGramBridgeSnapshot): Uri? {
         val song = resolveCurrentSong(context, snapshot) ?: return null
-        return PreferencesManager(context).loadCustomArt(song.id) ?: song.albumArtUri
+        return com.musicplayer.data.PreferencesManager(context).loadCustomArt(song.id) ?: song.albumArtUri
     }
 
-    private fun exposeArtworkFile(context: android.content.Context, artworkUri: Uri): File? {
+    private fun exposeArtworkFile(context: android.content.Context, artworkUri: Uri, fileName: String): File? {
         return runCatching {
             val outDir = File(context.cacheDir, "bridge_cover").apply { mkdirs() }
-            val outFile = File(outDir, "current_cover.bin")
+            val outFile = File(outDir, fileName)
             context.contentResolver.openInputStream(artworkUri)?.use { input ->
                 FileOutputStream(outFile).use { output ->
                     input.copyTo(output)

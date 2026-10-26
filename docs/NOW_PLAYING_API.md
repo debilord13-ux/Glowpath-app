@@ -115,6 +115,8 @@
 | POST | `/control/next` | Следующий трек |
 | POST | `/control/prev` | Предыдущий трек |
 | POST | `/control/stop` | Стоп |
+| POST / GET | `/control/play_playlist?id={id}` | Запустить плейлист по id |
+| POST / GET | `/control/play_playlist?name={имя}` | Запустить плейлист по имени (первое совпадение) |
 
 Все возвращают:
 
@@ -123,6 +125,104 @@
   "ok": true,
   "command": "play_pause",
   "message": "Command dispatched"
+}
+```
+
+---
+
+## Плейлисты (v1.2)
+
+### `GET /playlists`
+
+Список всех пользовательских плейлистов.
+
+```json
+{
+  "api_version": "1.2",
+  "count": 2,
+  "playlists": [
+    {
+      "id": "a1b2c3d4-...",
+      "name": "Road trip",
+      "description": "",
+      "song_count": 12,
+      "total_duration_ms": 2418000,
+      "total_duration_str": "40:18",
+      "is_pinned": true,
+      "created_at": 1789254998168,
+      "updated_at": 1789255023000,
+      "cover_url": "http://127.0.0.1:8765/playlists/a1b2c3d4-.../cover",
+      "songs_url": "http://127.0.0.1:8765/playlists/a1b2c3d4-..."
+    }
+  ],
+  "server_time": 1789255023000
+}
+```
+
+| Поле | Описание |
+|------|----------|
+| `id` | Идентификатор плейлиста (используется в `/playlists/{id}` и `/control/play_playlist`) |
+| `song_count` | Сколько треков реально есть в библиотеке (удалённые не считаются) |
+| `total_duration_ms` / `total_duration_str` | Суммарная длительность |
+| `is_pinned` | Закреплён ли плейлист |
+| `cover_url` / `songs_url` | Готовые ссылки для следующих запросов |
+
+### `GET /playlists/{id}` (алиас `GET /playlist?id={id}`)
+
+Плейлист с полным списком песен — в том же порядке, что и в приложении.
+
+```json
+{
+  "id": "a1b2c3d4-...",
+  "name": "Road trip",
+  "song_count": 2,
+  "songs": [
+    {
+      "index": 0,
+      "song_id": 12345,
+      "title": "4U",
+      "artist": "Раковая выухухоль",
+      "album": "Audio",
+      "duration_ms": 61000,
+      "duration_str": "1:01",
+      "uri": "content://media/external/audio/...",
+      "is_current": true
+    },
+    {
+      "index": 1,
+      "song_id": 12346,
+      "title": "Animals",
+      "artist": "Alex G",
+      "album": "Trick",
+      "duration_ms": 173000,
+      "duration_str": "2:53",
+      "uri": "content://media/external/audio/...",
+      "is_current": false
+    }
+  ]
+}
+```
+
+- `index` — позиция в плейлисте (с нуля).
+- `is_current` — играет ли этот трек прямо сейчас.
+- Если плейлиста с таким id нет — `404`.
+
+### `GET /playlists/{id}/cover` (алиас `GET /playlist_cover?id={id}`)
+
+Обложка плейлиста (JPEG): кастомная обложка → обложка выбранного/первого трека. Если обложки нет — `404`.
+
+### `GET /search?q={запрос}`
+
+Поиск по библиотеке (тот же скоринг, что и в bridge-провайдере, топ-12):
+
+```json
+{
+  "api_version": "1.2",
+  "query": "animals",
+  "count": 1,
+  "results": [
+    { "song_id": 12346, "title": "Animals", "artist": "Alex G", "score": 260, "...": "..." }
+  ]
 }
 ```
 
@@ -142,6 +242,13 @@
 curl http://127.0.0.1:8765/now
 curl -o cover.jpg http://127.0.0.1:8765/cover
 curl -X POST http://127.0.0.1:8765/control/next
+
+# плейлисты
+curl http://127.0.0.1:8765/playlists
+curl http://127.0.0.1:8765/playlists/a1b2c3d4-...
+curl -o playlist_cover.jpg http://127.0.0.1:8765/playlists/a1b2c3d4-.../cover
+curl -X POST "http://127.0.0.1:8765/control/play_playlist?name=Road%20trip"
+curl "http://127.0.0.1:8765/search?q=animals"
 ```
 
 ### JavaScript / fetch
@@ -183,11 +290,19 @@ api_base = http://127.0.0.1:8765
 | URI | Назначение |
 |-----|------------|
 | `content://com.musicplayer.bridge/status` | Статус трека (Cursor) |
-| `content://com.musicplayer.bridge/cover/current` | Обложка |
+| `content://com.musicplayer.bridge/cover/current` | Обложка текущего трека |
+| `content://com.musicplayer.bridge/search?q=...` | Поиск по библиотеке (Cursor) |
+| `content://com.musicplayer.bridge/playlists` | Все плейлисты (Cursor) |
+| `content://com.musicplayer.bridge/playlists/{id}/songs` | Треки плейлиста по порядку (Cursor) |
+| `content://com.musicplayer.bridge/playlists/{id}/cover` | Обложка плейлиста (файл-стрим) |
 
 Authority: `com.musicplayer.bridge`
 
-Подходит только для кода, который выполняется **на том же устройстве** внутри кастомного клиента Telegram.
+Колонки `playlists`: `playlist_id, name, description, song_count, total_duration_ms, is_pinned, created_at, updated_at, cover_uri`.
+
+Колонки `playlists/{id}/songs`: `track_index, song_id, title, artist, album, duration_ms, uri, cover_uri`.
+
+Подходит только для кода, который выполняется **на том же устройстве** внутри кастомного клиента Telegram — именно этот путь использует плагин Now Card.
 
 ---
 
