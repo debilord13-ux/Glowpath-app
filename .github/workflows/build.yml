@@ -1,62 +1,157 @@
-name: Build APK
+name: Build Debug APK
+
+
 
 on:
+
   workflow_dispatch:
+  
   push:
-    branches: [ main, master ]
+  
+    branches: [ main ]
+    
+
+
+permissions:
+
+  contents: read
+  
+
 
 jobs:
+
   build:
+  
     runs-on: ubuntu-latest
+    
+    timeout-minutes: 30
+    
     steps:
+    
       - uses: actions/checkout@v4
+      
+
 
       - name: Set up JDK 17
+      
         uses: actions/setup-java@v4
+        
         with:
+        
           distribution: temurin
+          
           java-version: 17
+          
+
 
       - name: Setup Android SDK
+      
         uses: android-actions/setup-android@v4
+        
         with:
+        
           packages: platform-tools
+          
+
 
       - name: Grant execute permission for gradlew
+      
         run: chmod +x gradlew
+        
+
 
       - name: Test player and library interactions
+      
         run: ./gradlew testDebugUnitTest --stacktrace
+        
+
 
       - name: Upload UI check reports
+      
         if: always()
+        
         uses: actions/upload-artifact@v4
+        
         with:
+        
           name: GlowPath-ui-checks
+          
           path: |
+          
             app/build/reports/tests/testDebugUnitTest/
+            
             app/build/reports/search-preview/
+            
             app/build/reports/album-preview/
+            
             app/build/reports/settings-preview/
+            
           if-no-files-found: ignore
+          
+          retention-days: 7
+          
 
-      - name: Build signed Release + Debug APK
-        env:
-          GLOWPATH_KEYSTORE_PATH: ${{ github.workspace }}/signing/glowpath.keystore
-          GLOWPATH_KEYSTORE_PASSWORD: glowpath-public-signing-2026
-          GLOWPATH_KEY_ALIAS: glowpath
-          GLOWPATH_KEY_PASSWORD: glowpath-public-signing-2026
-        run: ./gradlew assembleRelease assembleDebug --stacktrace
 
-      # ЭТОТ APK ставить для проверки плавности (R8, не-debuggable)
-      - name: Upload Release APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: GlowPath-release
-          path: app/build/outputs/apk/release/*.apk
+      - name: Build Debug APK
+      
+        run: ./gradlew assembleDebug --stacktrace
+        
+
 
       - name: Upload Debug APK
+      
         uses: actions/upload-artifact@v4
+        
         with:
+        
           name: GlowPath-debug
+          
           path: app/build/outputs/apk/debug/*.apk
+          
+          if-no-files-found: error
+          
+          retention-days: 7
+          
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
