@@ -46,6 +46,13 @@ class DualPlayerEngine(private val context: Context) {
     private var playbackSpeed: Float = 1f
     private var nextPrepared: Boolean = false
 
+    // Гейны нормализации громкости (множители ≤ 1) для мастера и предзагруженного
+    // следующего трека. Без них кроссфейд из громкого трека в тихий звучит громче,
+    // чем сам тихий трек после перехода — сумма двух несинхронных источников
+    // всегда выше по мощности, чем одиночный сигнал.
+    private var masterLoudnessGain: Float = 1f
+    private var nextLoudnessGain: Float = 1f
+
     var onPlayerSwapped: ((masterPlayer: MediaPlayer) -> Unit)? = null
 
     fun setMasterPlayer(player: MediaPlayer) {
@@ -55,6 +62,19 @@ class DualPlayerEngine(private val context: Context) {
         nextPrepared = false
         playerA = player
         applyVolume(player, 1f)
+    }
+
+    /** Коэффициент громкости (0..1) для текущего (мастер) плеера. */
+    fun setMasterLoudnessGain(gain: Float) {
+        masterLoudnessGain = gain.coerceIn(0f, 1f)
+        if (!transitionRunning) {
+            playerA?.let { applyVolume(it, 1f) }
+        }
+    }
+
+    /** Коэффициент громкости (0..1) для предзагруженного следующего трека. */
+    fun setNextLoudnessGain(gain: Float) {
+        nextLoudnessGain = gain.coerceIn(0f, 1f)
     }
 
     fun setUserVolume(volume: Float) {
@@ -205,6 +225,7 @@ class DualPlayerEngine(private val context: Context) {
             // Gapless cut: следующий уже играет, старый глушим сразу.
             playerA = nextPlayer
             playerB = outgoing
+            swapLoudnessGains()
             applyVolume(nextPlayer, 1f)
             onPlayerSwapped?.invoke(nextPlayer)
             onSwapReady?.invoke()
@@ -219,6 +240,7 @@ class DualPlayerEngine(private val context: Context) {
 
         playerA = nextPlayer
         playerB = outgoing
+        swapLoudnessGains()
         onPlayerSwapped?.invoke(nextPlayer)
         onSwapReady?.invoke()
 
@@ -276,9 +298,17 @@ class DualPlayerEngine(private val context: Context) {
 
     private fun applyVolume(player: MediaPlayer?, envelope: Float) {
         if (player == null) return
-        val left = (userVolumeL * envelope).coerceIn(0f, 1f)
-        val right = (userVolumeR * envelope).coerceIn(0f, 1f)
+        val gain = if (player === playerB) nextLoudnessGain else masterLoudnessGain
+        val left = (userVolumeL * gain * envelope).coerceIn(0f, 1f)
+        val right = (userVolumeR * gain * envelope).coerceIn(0f, 1f)
         player.setVolume(left, right)
+    }
+
+    /** После смены мастеров гейны тоже меняются местами (вместе с треками). */
+    private fun swapLoudnessGains() {
+        val tmp = masterLoudnessGain
+        masterLoudnessGain = nextLoudnessGain
+        nextLoudnessGain = tmp
     }
 
     private fun applySpeed(player: MediaPlayer?) {
