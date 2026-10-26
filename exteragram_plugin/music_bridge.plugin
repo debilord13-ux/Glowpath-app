@@ -1,7 +1,7 @@
 __id__ = "music_bridge"
 __name__ = "Now Card"
-__description__ = "Команда .play делает красивую карточку текущего трека из твоего плеера и отправляет её как фото."
-__version__ = "4.7.0"
+__description__ = "Команда .play делает красивую карточку текущего трека из твоего плеера и отправляет её как фото. Команды .playlists и .pl присылают плейлисты и их треки."
+__version__ = "5.0.0"
 __author__ = "@JavaScript_XD"
 __min_version__ = "11.12.0"
 
@@ -26,6 +26,8 @@ from markdown_utils import parse_markdown
 
 PACKAGE_NAME = "com.musicplayer"
 STATUS_URI = "content://com.musicplayer.bridge/status"
+PLAYLISTS_URI = "content://com.musicplayer.bridge/playlists"
+PLAYLIST_SONGS_URI = "content://com.musicplayer.bridge/playlists/{id}/songs"
 RESAMPLE = getattr(getattr(Image, "Resampling", Image), "LANCZOS")
 
 THEME_ITEMS = ["Apple", "Glass", "Minimal", "Poster", "Aura"]
@@ -74,11 +76,15 @@ SETTINGS_DEFAULTS = {
     "caption_template": "{artist} — {track}",
     "share_command": ".style",
     "import_reply_command": ".usestyle",
+    "playlists_command": ".playlists",
+    "playlist_command": ".pl",
     "preset_name": "my_style",
     "preset_selector": 0,
 }
 PRESET_KEYS = [
     "command",
+    "playlists_command",
+    "playlist_command",
     "high_quality",
     "theme_selector",
     "color_style",
@@ -374,6 +380,21 @@ class Plugin(BasePlugin):
                 subtext="Ответь этой командой на сообщение со стилем, и пресет применится.",
                 icon="msg_download",
             ),
+            Header(text="Плейлисты"),
+            Input(
+                key="playlists_command",
+                text="Команда списка плейлистов",
+                default=".playlists",
+                subtext="Отправляет в чат список всех твоих плейлистов с количеством треков.",
+                icon="msg_text",
+            ),
+            Input(
+                key="playlist_command",
+                text="Команда треков плейлиста",
+                default=".pl",
+                subtext="Напиши её с номером или названием (.pl 2 / .pl Road), чтобы получить песни плейлиста.",
+                icon="msg_gallery",
+            ),
             Input(
                 key="preset_name",
                 text="Имя для файла профиля",
@@ -448,6 +469,30 @@ class Plugin(BasePlugin):
             run_on_queue(lambda: self._import_preset_from_reply(params))
             return HookResult(strategy=HookStrategy.CANCEL, params=params)
 
+        playlists_command = self._playlists_command()
+        if playlists_command and message.lower() == playlists_command.lower():
+            if peer == 0:
+                self._show_error("Не удалось определить чат для отправки плейлистов.")
+                return HookResult()
+            run_on_queue(
+                lambda: self._handle_playlists_command(peer, reply_to_msg, reply_to_top_msg, schedule_date)
+            )
+            return HookResult(strategy=HookStrategy.CANCEL, params=params)
+
+        playlist_command = self._playlist_command()
+        if playlist_command:
+            lowered = message.lower()
+            cmd_lower = playlist_command.lower()
+            if lowered == cmd_lower or lowered.startswith(cmd_lower + " "):
+                if peer == 0:
+                    self._show_error("Не удалось определить чат для отправки треков плейлиста.")
+                    return HookResult()
+                arg = message[len(playlist_command):].strip() if len(message) > len(playlist_command) else ""
+                run_on_queue(
+                    lambda: self._handle_playlist_command(arg, peer, reply_to_msg, reply_to_top_msg, schedule_date)
+                )
+                return HookResult(strategy=HookStrategy.CANCEL, params=params)
+
         return HookResult()
 
     def _is_enabled(self):
@@ -464,6 +509,14 @@ class Plugin(BasePlugin):
     def _import_reply_command(self):
         raw = cleanup_text(self.get_setting("import_reply_command", ".usestyle") or ".usestyle")
         return raw if raw else ".usestyle"
+
+    def _playlists_command(self):
+        raw = cleanup_text(self.get_setting("playlists_command", ".playlists") or ".playlists")
+        return raw if raw else ".playlists"
+
+    def _playlist_command(self):
+        raw = cleanup_text(self.get_setting("playlist_command", ".pl") or ".pl")
+        return raw if raw else ".pl"
 
     def _context(self):
         fragment = get_last_fragment()
@@ -499,6 +552,11 @@ class Plugin(BasePlugin):
             "Запусти трек в музыкальном приложении, потом в чате напиши "
             + self._command()
             + ". Плагин не отправит текст, а вместо этого сделает фото-карточку. "
+            + "Команда "
+            + self._playlists_command()
+            + " пришлёт список всех твоих плейлистов, а "
+            + self._playlist_command()
+            + " <номер/название> — треки конкретного плейлиста. "
             + "А чтобы поделиться настройками карточки, используй кнопку в меню чата "
             + "или команду "
             + self._share_command()
@@ -879,6 +937,218 @@ class Plugin(BasePlugin):
                     cursor.close()
             except Exception:
                 pass
+
+    def _query_playlists(self):
+        if not self._ensure_app_available():
+            return []
+        context = self._context()
+        if context is None:
+            return []
+
+        cursor = None
+        try:
+            cursor = context.getContentResolver().query(Uri.parse(PLAYLISTS_URI), None, None, None, None)
+            if cursor is None:
+                return []
+
+            items = []
+            while cursor.moveToNext():
+                def read_string(name):
+                    idx = cursor.getColumnIndex(name)
+                    if idx < 0 or cursor.isNull(idx):
+                        return ""
+                    return cleanup_text(cursor.getString(idx))
+
+                def read_long(name):
+                    idx = cursor.getColumnIndex(name)
+                    if idx < 0 or cursor.isNull(idx):
+                        return 0
+                    return safe_int(cursor.getLong(idx), 0)
+
+                items.append(
+                    {
+                        "playlist_id": read_string("playlist_id"),
+                        "name": read_string("name"),
+                        "description": read_string("description"),
+                        "song_count": read_long("song_count"),
+                        "total_duration_ms": read_long("total_duration_ms"),
+                        "is_pinned": read_long("is_pinned") == 1,
+                    }
+                )
+            return items
+        except Exception as error:
+            log(f"[NowCard] playlists query error: {error}")
+            return []
+        finally:
+            try:
+                if cursor is not None:
+                    cursor.close()
+            except Exception:
+                pass
+
+    def _query_playlist_songs(self, playlist_id):
+        if not playlist_id or not self._ensure_app_available():
+            return []
+        context = self._context()
+        if context is None:
+            return []
+
+        cursor = None
+        try:
+            songs_uri = PLAYLIST_SONGS_URI.format(id=playlist_id)
+            cursor = context.getContentResolver().query(Uri.parse(songs_uri), None, None, None, None)
+            if cursor is None:
+                return []
+
+            items = []
+            while cursor.moveToNext():
+                def read_string(name):
+                    idx = cursor.getColumnIndex(name)
+                    if idx < 0 or cursor.isNull(idx):
+                        return ""
+                    return cleanup_text(cursor.getString(idx))
+
+                def read_long(name):
+                    idx = cursor.getColumnIndex(name)
+                    if idx < 0 or cursor.isNull(idx):
+                        return 0
+                    return safe_int(cursor.getLong(idx), 0)
+
+                items.append(
+                    {
+                        "track_index": read_long("track_index"),
+                        "song_id": read_long("song_id"),
+                        "title": read_string("title"),
+                        "artist": read_string("artist"),
+                        "album": read_string("album"),
+                        "duration_ms": read_long("duration_ms"),
+                    }
+                )
+            return items
+        except Exception as error:
+            log(f"[NowCard] playlist songs query error: {error}")
+            return []
+        finally:
+            try:
+                if cursor is not None:
+                    cursor.close()
+            except Exception:
+                pass
+
+    def _format_duration(self, duration_ms):
+        total_seconds = safe_int(duration_ms, 0) // 1000
+        if total_seconds <= 0:
+            return ""
+        minutes, seconds = divmod(total_seconds, 60)
+        hours, minutes = divmod(minutes, 60)
+        if hours:
+            return f"{hours}:{minutes:02d}:{seconds:02d}"
+        return f"{minutes}:{seconds:02d}"
+
+    def _tracks_label(self, count):
+        value = safe_int(count, 0)
+        if value % 10 == 1 and value % 100 != 11:
+            return f"{value} трек"
+        if 2 <= value % 10 <= 4 and not 12 <= value % 100 <= 14:
+            return f"{value} трека"
+        return f"{value} треков"
+
+    def _send_text_message(self, peer, text, reply_to_msg=None, reply_to_top_msg=None, schedule_date=None):
+        params = {
+            "peer": peer,
+            "message": text,
+        }
+        try:
+            parsed = parse_markdown(text)
+            params["message"] = parsed.text
+            params["entities"] = [entity.to_tlrpc_object() for entity in parsed.entities]
+        except Exception:
+            pass
+        if reply_to_msg is not None:
+            params["replyToMsg"] = reply_to_msg
+        if reply_to_top_msg is not None:
+            params["replyToTopMsg"] = reply_to_top_msg
+        if schedule_date is not None:
+            params["scheduleDate"] = schedule_date
+        send_message(params)
+
+    def _handle_playlists_command(self, peer, reply_to_msg=None, reply_to_top_msg=None, schedule_date=None):
+        try:
+            playlists = self._query_playlists()
+            if not playlists:
+                self._show_error("Плейлисты не найдены. Создай их в приложении и попробуй ещё раз.")
+                return
+
+            lines = ["🎧 *Плейлисты*"]
+            for index, item in enumerate(playlists, start=1):
+                name = item.get("name") or "Без названия"
+                pin = "📌 " if item.get("is_pinned") else ""
+                total = self._format_duration(item.get("total_duration_ms"))
+                suffix = f" • {total}" if total else ""
+                lines.append(f"{pin}{index}. {name} — {self._tracks_label(item.get('song_count'))}{suffix}")
+            lines.append("")
+            lines.append(
+                f"Треки плейлиста: {self._playlist_command()} <номер> или {self._playlist_command()} <название>"
+            )
+            self._send_text_message(peer, "\n".join(lines), reply_to_msg, reply_to_top_msg, schedule_date)
+            self._show_success("Список плейлистов отправлен.")
+        except Exception as error:
+            log(f"[NowCard] playlists command error: {error}")
+            self._show_error("Не удалось получить список плейлистов.")
+
+    def _handle_playlist_command(self, arg, peer, reply_to_msg=None, reply_to_top_msg=None, schedule_date=None):
+        try:
+            playlists = self._query_playlists()
+            if not playlists:
+                self._show_error("Плейлисты не найдены. Создай их в приложении и попробуй ещё раз.")
+                return
+
+            needle = cleanup_text(arg)
+            target = None
+            if needle.isdigit():
+                index = safe_int(needle, 1) - 1
+                if 0 <= index < len(playlists):
+                    target = playlists[index]
+            if target is None and needle:
+                lowered = needle.lower()
+                target = next((p for p in playlists if (p.get("name") or "").lower() == lowered), None)
+                if target is None:
+                    target = next((p for p in playlists if lowered in (p.get("name") or "").lower()), None)
+            if target is None:
+                self._show_info(
+                    "Укажи номер или название плейлиста: "
+                    + self._playlist_command()
+                    + " 1 или "
+                    + self._playlist_command()
+                    + " Road"
+                )
+                return
+
+            songs = self._query_playlist_songs(target.get("playlist_id", ""))
+            if not songs:
+                self._show_error("Плейлист пуст или недоступен.")
+                return
+
+            header = f"📂 *{target.get('name') or 'Плейлист'}* — {self._tracks_label(len(songs))}"
+            total = self._format_duration(target.get("total_duration_ms"))
+            if total:
+                header += f" • {total}"
+            lines = [header]
+            limit = 40
+            for index, song in enumerate(songs[:limit], start=1):
+                artist = song.get("artist") or "Неизвестный исполнитель"
+                title = song.get("title") or "Без названия"
+                duration = self._format_duration(song.get("duration_ms"))
+                suffix = f" ({duration})" if duration else ""
+                lines.append(f"{index}. {artist} — {title}{suffix}")
+            remaining = len(songs) - limit
+            if remaining > 0:
+                lines.append(f"… и ещё {self._tracks_label(remaining)}")
+            self._send_text_message(peer, "\n".join(lines), reply_to_msg, reply_to_top_msg, schedule_date)
+            self._show_success("Треки плейлиста отправлены.")
+        except Exception as error:
+            log(f"[NowCard] playlist command error: {error}")
+            self._show_error("Не удалось получить треки плейлиста.")
 
     def _copy_cover_to_local_file(self, content_uri):
         if not content_uri:
