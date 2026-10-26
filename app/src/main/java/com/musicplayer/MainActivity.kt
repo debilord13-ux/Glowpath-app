@@ -340,6 +340,14 @@ fun MusicPlayerApp(
                 }
             }
 
+            ExteraGramBridgeContract.TYPE_PLAY_PLAYLIST -> {
+                val playlistId = command.payload.ifBlank { command.query }
+                val played = viewModel.playPlaylistById(playlistId)
+                if (played) {
+                    navController.navigate("player") { launchSingleTop = true }
+                }
+            }
+
             ExteraGramBridgeContract.TYPE_OPEN_LYRICS_QUERY -> {
                 val played = viewModel.playByQuery(command.query)
                 if (played != null) {
