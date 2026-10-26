@@ -126,8 +126,6 @@ fun SettingsScreen(
         settings.selectedFontId == DefaultAppFontId -> "По умолчанию (${DefaultAppFont.displayName})"
         else -> selectedBuiltInFont.displayName
     }
-    val themeLabel = settings.theme.settingsLabel()
-    val interfaceLabel = if (settings.theme == AppTheme.MATERIAL_YOU) "Material You" else "Material 3"
     val sleepTimerLabel = when {
         sleepTimerState.isRunning && sleepTimerState.stopAfterTrack && sleepTimerState.remainingSeconds <= 0 ->
             "После текущего трека"
@@ -208,7 +206,6 @@ fun SettingsScreen(
             if (settingsQuery.isNotBlank()) {
                 SettingsSearchResults(
                     query = settingsQuery,
-                    onTheme = { showThemeDialog = true },
                     onTypography = { showTypographyStudio = true },
                     onFont = openFontPicker,
                     onTopBar = onTopBarClick,
@@ -219,7 +216,7 @@ fun SettingsScreen(
                     onStats = onStatsClick,
                     onAbout = openAbout,
                     onSort = { showSortSheet = true },
-                    onShuffle = { viewModel.updateSettings(settings.copy(shuffleEnabled = !settings.shuffleEnabled)) },
+                    onNormalization = { viewModel.updateSettings(settings.copy(loudnessNormalizationEnabled = !settings.loudnessNormalizationEnabled)) },
                     onWavySeekBar = { viewModel.updateSettings(settings.copy(useWavySeekBar = !settings.useWavySeekBar)) },
                     onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) },
                     onColoredQueuePanel = { viewModel.updateSettings(settings.copy(coloredQueuePanel = !settings.coloredQueuePanel)) }
@@ -231,14 +228,6 @@ fun SettingsScreen(
                 subtitle = "Тема, шрифт, типографика и верхняя панель",
                 visible = settingsQuery.isBlank()
             ) {
-                SettingsNavigationItem(
-                    icon = Icons.Rounded.Palette,
-                    iconBg = MaterialTheme.colorScheme.primary,
-                    title = "Внешний вид",
-                    subtitle = "Текущая тема: $themeLabel",
-                    onClick = { showThemeDialog = true }
-                )
-                SettingsGroupDivider()
                 SettingsNavigationItem(
                     icon = Icons.Rounded.FormatSize,
                     iconBg = MaterialTheme.colorScheme.tertiary,
@@ -366,6 +355,21 @@ fun SettingsScreen(
                     title = "Эквалайзер",
                     subtitle = "Пресеты и настройка звучания",
                     onClick = onEqualizerClick
+                )
+                SettingsGroupDivider()
+                SettingsSwitchItem(
+                    icon = Icons.Rounded.Equalizer,
+                    iconBg = MaterialTheme.colorScheme.secondary,
+                    title = "Нормализация громкости",
+                    subtitle = if (settings.loudnessNormalizationEnabled) {
+                        "Слишком громкие треки плавно приглушаются до общего уровня (−14 LUFS)"
+                    } else {
+                        "Каждый трек играет с исходной громкостью записи"
+                    },
+                    checked = settings.loudnessNormalizationEnabled,
+                    onCheckedChange = {
+                        viewModel.updateSettings(settings.copy(loudnessNormalizationEnabled = it))
+                    }
                 )
             }
 
@@ -609,7 +613,6 @@ private fun SettingsToggleRow(
 @Composable
 private fun SettingsSearchResults(
     query: String,
-    onTheme: () -> Unit,
     onTypography: () -> Unit,
     onFont: () -> Unit,
     onTopBar: () -> Unit,
@@ -620,14 +623,13 @@ private fun SettingsSearchResults(
     onStats: () -> Unit,
     onAbout: () -> Unit,
     onSort: () -> Unit,
-    onShuffle: () -> Unit,
+    onNormalization: () -> Unit,
     onWavySeekBar: () -> Unit,
     onColoredButtons: () -> Unit,
     onColoredQueuePanel: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val entries = listOf(
-        Triple("Внешний вид", "Тема и цветовая схема", Icons.Rounded.Palette) to onTheme,
         Triple("Типографика", "Размер, контраст и превью текста", Icons.Rounded.FormatSize) to onTypography,
         Triple("Шрифт", "Выбор шрифта приложения", Icons.Rounded.TextFields) to onFont,
         Triple("Верхняя панель", "Стиль, фон и поведение шапки", Icons.Rounded.Tune) to onTopBar,
@@ -635,8 +637,8 @@ private fun SettingsSearchResults(
         Triple("Переходы", "Кроссфейд и смена треков", Icons.Rounded.SwapHoriz) to onTransitions,
         Triple("Таймер сна", "Остановка после трека и затухание", Icons.Rounded.Bedtime) to onSleepTimer,
         Triple("Эквалайзер", "Пресеты и настройка звучания", Icons.Rounded.GraphicEq) to onEqualizer,
+        Triple("Нормализация громкости", "Единая громкость треков", Icons.Rounded.Equalizer) to onNormalization,
         Triple("Сортировка", "Название, исполнитель, альбом, длительность и дата добавления", Icons.Rounded.Sort) to onSort,
-        Triple("Перемешивание", "Случайный порядок треков", Icons.Rounded.Shuffle) to onShuffle,
         Triple("Волнистый ползунок", "Анимированный seek bar в плеере", Icons.Rounded.ShowChart) to onWavySeekBar,
         Triple("Кнопки в цвет трека", "Раскраска кнопок плеера под обложку", Icons.Rounded.Colorize) to onColoredButtons,
         Triple("Панель очереди", "Подкраска панели очереди под цвет обложки", Icons.Rounded.QueueMusic) to onColoredQueuePanel,
