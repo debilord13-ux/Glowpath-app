@@ -84,6 +84,7 @@ data class PlayerSettings(
     val useWavySeekBar: Boolean   = true,
     val coloredPlayerButtons: Boolean = true, // красить кнопки плеера под цвета обложки
     val coloredQueuePanel: Boolean    = true, // красить панель очереди в другой оттенок обложки
+    val loudnessNormalizationEnabled: Boolean = true, // выравнивать громкость треков (−14 LUFS)
 
     // ── Типографика ───────────────────────────────────────────────────────────
     val playerTitleSize: Float    = 22f,     // размер заголовка трека в плеере (sp)
