@@ -92,6 +92,7 @@ class PreferencesManager(context: Context) {
             putBoolean("use_wavy_seekbar",   settings.useWavySeekBar)
             putBoolean("colored_player_buttons", settings.coloredPlayerButtons)
             putBoolean("colored_queue_panel", settings.coloredQueuePanel)
+            putBoolean("loudness_normalization", settings.loudnessNormalizationEnabled)
             // Типографика
             putFloat("player_title_size",     settings.playerTitleSize)
             putFloat("player_artist_size",    settings.playerArtistSize)
@@ -210,6 +211,7 @@ class PreferencesManager(context: Context) {
             useWavySeekBar    = prefs.getBoolean("use_wavy_seekbar", true),
             coloredPlayerButtons = prefs.getBoolean("colored_player_buttons", true),
             coloredQueuePanel = prefs.getBoolean("colored_queue_panel", true),
+            loudnessNormalizationEnabled = prefs.getBoolean("loudness_normalization", true),
             // Типографика
             playerTitleSize     = prefs.getFloat("player_title_size",     22f),
             playerArtistSize    = prefs.getFloat("player_artist_size",    15f),

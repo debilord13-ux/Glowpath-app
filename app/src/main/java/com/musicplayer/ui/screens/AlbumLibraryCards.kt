@@ -293,8 +293,8 @@ internal fun SharedTransitionScope.AlbumDetailPage(
                         }
                     }
                 }
-                itemsIndexed(visibleTracks, key = { _, song -> "song:${song.id}" }) { index, song ->
-                    AlbumTrackRow(song, if (query.isBlank()) index + 1 else tracks.indexOf(song) + 1,
+                itemsIndexed(visibleTracks, key = { _, song -> "song:${song.id}" }) { _, song ->
+                    AlbumTrackRow(song,
                         state.currentSongId == song.id, state.isPlaying,
                         onClick = { actions.onPlay(tracks, song) }, modifier = Modifier.animateItem())
                 }
@@ -350,7 +350,7 @@ private fun AlbumPlayButton(enabled: Boolean, onClick: () -> Unit) {
 }
 
 @Composable
-private fun AlbumTrackRow(song: Song, index: Int, current: Boolean, playing: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun AlbumTrackRow(song: Song, current: Boolean, playing: Boolean, onClick: () -> Unit, modifier: Modifier) {
     val colors = MaterialTheme.colorScheme
     val font = LocalAppFontFamily.current
     val color by animateColorAsState(if (current) colors.secondaryContainer else colors.surface, tween(180), label = "albumTrack")
@@ -359,10 +359,28 @@ private fun AlbumTrackRow(song: Song, index: Int, current: Boolean, playing: Boo
             .semantics { if (current) stateDescription = if (playing) "Сейчас играет" else "На паузе" }) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(Modifier.width(28.dp), contentAlignment = Alignment.Center) {
-                if (current) Icon(if (playing) Icons.Rounded.GraphicEq else Icons.Rounded.Pause, null,
-                    tint = colors.primary, modifier = Modifier.size(22.dp))
-                else Text(index.toString(), fontFamily = font, style = MaterialTheme.typography.labelLarge, color = colors.onSurfaceVariant)
+            // Обложка трека вместо порядкового номера; у играющего трека — индикатор поверх обложки.
+            Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                OptimizedAlbumArt(
+                    uri = song.displayAlbumArt(),
+                    title = song.title,
+                    modifier = Modifier.fillMaxSize().clip(RoundedCornerShape(12.dp)),
+                    targetSize = CoilSize(156, 156)
+                )
+                if (current) {
+                    Surface(
+                        color = colors.primary,
+                        contentColor = colors.onPrimary,
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.align(Alignment.BottomEnd)
+                    ) {
+                        Icon(
+                            if (playing) Icons.Rounded.GraphicEq else Icons.Rounded.Pause,
+                            contentDescription = null,
+                            modifier = Modifier.padding(3.dp).size(14.dp)
+                        )
+                    }
+                }
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(song.displayTitle(), style = MaterialTheme.typography.bodyLarge, fontFamily = font,

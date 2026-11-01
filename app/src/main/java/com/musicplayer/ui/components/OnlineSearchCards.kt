@@ -76,6 +76,8 @@ internal fun OnlineTrackCard(
     onDownload: () -> Unit,
     onAdd: () -> Unit,
     onCancel: (() -> Unit)? = null,
+    variants: List<OnlineSong> = emptyList(),
+    onPickVariant: (OnlineSong) -> Unit = {},
 ) {
     val colors = MaterialTheme.colorScheme
     val font = LocalAppFontFamily.current
@@ -133,6 +135,7 @@ internal fun OnlineTrackCard(
                         style = MaterialTheme.typography.bodyMedium, fontFamily = font,
                         color = if (isCurrent || selected) contentColor else colors.onSurfaceVariant,
                         maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    SourceVariantsRow(song, variants, onPickVariant, font, colors)
                     val status = when {
                         download is DownloadState.Err -> download.message
                         download is DownloadState.Pending -> "Ожидание загрузки"
@@ -180,6 +183,64 @@ internal fun OnlineTrackCard(
                 if (download is DownloadState.Progress && download.percent > 0) {
                     LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
                 } else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+/**
+ * Ряд выбора источника: если у песни есть варианты с других сайтов,
+ * показываем активный источник и дропдаун с остальными.
+ */
+@Composable
+private fun SourceVariantsRow(
+    song: OnlineSong,
+    variants: List<OnlineSong>,
+    onPickVariant: (OnlineSong) -> Unit,
+    font: androidx.compose.ui.text.font.FontFamily,
+    colors: androidx.compose.material3.ColorScheme,
+) {
+    if (variants.size <= 1) return
+    var expanded by remember { mutableStateOf(false) }
+    val activeLabel = song.sourceLabel.ifBlank { "Источник" }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(
+            onClick = { expanded = true },
+            color = colors.surfaceContainerHigh,
+            contentColor = colors.onSurfaceVariant,
+            shape = MaterialTheme.shapes.small,
+        ) {
+            Row(Modifier.padding(start = 8.dp, end = 4.dp, top = 3.dp, bottom = 3.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(activeLabel, style = MaterialTheme.typography.labelSmall, fontFamily = font)
+                Icon(Icons.Rounded.KeyboardArrowDown, "Выбрать источник",
+                    modifier = Modifier.size(16.dp))
+            }
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            variants.forEach { variant ->
+                DropdownMenuItem(
+                    text = {
+                        val label = buildString {
+                            append(variant.sourceLabel.ifBlank { "Источник" })
+                            if (variant.duration.isNotBlank()) {
+                                append(" · ")
+                                append(variant.duration)
+                            }
+                        }
+                        Text(label, fontFamily = font)
+                    },
+                    leadingIcon = {
+                        if (variant.downloadUrl == song.downloadUrl) {
+                            Icon(Icons.Rounded.Check, null, Modifier.size(18.dp))
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        if (variant.downloadUrl != song.downloadUrl) onPickVariant(variant)
+                    }
+                )
             }
         }
     }

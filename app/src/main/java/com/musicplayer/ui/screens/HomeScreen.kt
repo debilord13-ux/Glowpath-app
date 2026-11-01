@@ -229,7 +229,7 @@ fun HomeScreen(
     var selectedIds     by remember { mutableStateOf(setOf<Long>()) }
     val isSelectionMode = selectedIds.isNotEmpty()
     val listState       = rememberLazyListState()
-    val scrollBehavior  = TopAppBarDefaults.exitUntilCollapsedScrollBehavior(
+    val scrollBehavior  = TopAppBarDefaults.pinnedScrollBehavior(
         canScroll = { !isSearching && !isSelectionMode }
     )
     val keyboard = LocalSoftwareKeyboardController.current
@@ -1875,9 +1875,10 @@ fun HomeTopBar(
                         windowInsets = WindowInsets(0, 0, 0, 0)
                     )
                     HomeTopBarMode.Library -> Column {
-                        LargeTopAppBar(
+                        // Компактная шапка вместо LargeTopAppBar: маленькая «лобная» зона,
+                        // контент начинается сразу под заголовком.
+                        TopAppBar(
                             title = {
-                                // Keep only the title here: Material measures it twice when collapsing.
                                 Text(
                                     topBar.titleText.ifBlank { "Моя медиатека" },
                                     fontFamily = font,
@@ -1949,6 +1950,7 @@ fun HomeTopBar(
                             scrollBehavior = scrollBehavior
                         )
                         if (topBar.showSongCount) {
+                            // pinned-поведение: шапка не схлопывается, подзаголовок виден всегда
                             val expandedFraction = 1f - scrollBehavior.state.collapsedFraction
                             val subtitleHeight = with(LocalDensity.current) {
                                 MaterialTheme.typography.labelLarge.lineHeight.toDp()

@@ -153,7 +153,7 @@ fun PlaylistEditorDialog(
         mutableStateOf(initialCoverSongId?.takeIf { it in initialSelection } ?: initialSelection.firstOrNull())
     }
     var customCoverUri by remember(title, initialCustomCoverUri) { mutableStateOf(initialCustomCoverUri) }
-    var motionCoverUri by remember(title, initialMotionCoverUri) { mutableStateOf(initialMotionCoverUri) }
+    var motionCoverUri by remember(title) { mutableStateOf<String?>(null) }
     var isPinned by remember(title, initialPinned) { mutableStateOf(initialPinned) }
     var showSelectedOnly by remember(title) { mutableStateOf(false) }
     var coverMessage by remember(title) { mutableStateOf<String?>(null) }
