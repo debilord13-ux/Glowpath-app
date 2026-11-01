@@ -50,6 +50,8 @@ class MusicService : Service() {
 
     // Callbacks injected by ViewModel
     var onPlayPause: (() -> Unit)? = null
+    var onPlayCommand: (() -> Unit)? = null
+    var onPauseCommand: (() -> Unit)? = null
     var onPrev:      (() -> Unit)? = null
     var onNext:      (() -> Unit)? = null
     var onStop:      (() -> Unit)? = null
@@ -125,8 +127,8 @@ class MusicService : Service() {
             )
             setSessionActivity(makeActivityIntent())
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay()         { onPlayPause?.invoke() }
-                override fun onPause()        { onPlayPause?.invoke() }
+                override fun onPlay()         { (onPlayCommand ?: onPlayPause)?.invoke() }
+                override fun onPause()        { (onPauseCommand ?: onPlayPause)?.invoke() }
                 override fun onSkipToNext()   { onNext?.invoke() }
                 override fun onSkipToPrevious() { onPrev?.invoke() }
                 override fun onSeekTo(pos: Long) { onSeekTo?.invoke(pos) }
