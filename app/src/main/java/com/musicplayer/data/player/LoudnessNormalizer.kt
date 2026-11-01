@@ -403,7 +403,7 @@ object LoudnessNormalizer {
                 push(l, r, filterL, filterR)
                 frame++
             }
-            return frames
+            return frames.toLong()
         }
 
         fun consumeFloat(
@@ -416,13 +416,14 @@ object LoudnessNormalizer {
             val frames = floatBuffer.remaining() / fileChannels
             var frame = 0L
             while (frame < frames) {
-                val base = frame * fileChannels
+                // FloatBuffer.get принимает только Int-индекс — приводим явно.
+                val base = (frame * fileChannels).toInt()
                 val l = floatBuffer.get(base).toDouble()
                 val r = if (fileChannels > 1) floatBuffer.get(base + 1).toDouble() else l
                 push(l, r, filterL, filterR)
                 frame++
             }
-            return frames
+            return frames.toLong()
         }
 
         private fun push(l: Double, r: Double, filterL: KWeightingFilter, filterR: KWeightingFilter) {
