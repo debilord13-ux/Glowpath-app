@@ -225,10 +225,15 @@ internal fun SharedTransitionScope.AlbumDetailPage(
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding(),
             contentAlignment = Alignment.TopCenter) {
-            LazyColumn(state = listState, modifier = Modifier.widthIn(max = 720.dp).fillMaxSize().testTag("album_tracks"),
+            // ЖЕСТЫ НА ВСЁМ ЭКРАНЕ: колонка больше не зажата лимитом 720dp — на широких
+            // экранах боковые поля раньше были «мёртвыми зонами» (свайпы вверх/вниз и
+            // тапы там ничего не делали). Список теперь во всю ширину, а содержимое
+            // центрируется и ограничивается по ширине ПОЭЛЕМЕНТНО (см. widthIn ниже).
+            LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("album_tracks"),
+                horizontalAlignment = Alignment.CenterHorizontally,
                 contentPadding = PaddingValues(bottom = LocalBottomChromeHeight.current + BottomChromeExtraSpace + 24.dp)) {
                 item(key = "hero") {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp).padding(top = 12.dp, bottom = 24.dp),
+                    Column(Modifier.widthIn(max = 720.dp).padding(horizontal = 24.dp).padding(top = 12.dp, bottom = 24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally) {
                         LibraryAlbumCover(album, animatedScope,
                             Modifier.widthIn(max = 300.dp).fillMaxWidth(0.82f).aspectRatio(1f).testTag("album_hero_cover"))
@@ -265,7 +270,7 @@ internal fun SharedTransitionScope.AlbumDetailPage(
                     }
                 }
                 item(key = "track_header") {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp)) {
+                    Column(Modifier.widthIn(max = 720.dp).padding(horizontal = 16.dp)) {
                         HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.5f))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(if (query.isBlank()) "Треки" else "Найдено: ${visibleTracks.size}",
@@ -294,39 +299,48 @@ internal fun SharedTransitionScope.AlbumDetailPage(
                     }
                 }
                 itemsIndexed(visibleTracks, key = { _, song -> "song:${song.id}" }) { _, song ->
-                    AlbumTrackRow(song,
-                        state.currentSongId == song.id, state.isPlaying,
-                        onClick = { actions.onPlay(tracks, song) }, modifier = Modifier.animateItem())
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        AlbumTrackRow(song,
+                            state.currentSongId == song.id, state.isPlaying,
+                            onClick = { actions.onPlay(tracks, song) },
+                            modifier = Modifier.widthIn(max = 720.dp).animateItem())
+                    }
                 }
                 if (visibleTracks.isEmpty()) {
                     item(key = "empty_tracks") {
-                        AlbumEmptyState(
-                            if (query.isNotBlank()) "Такого трека здесь нет" else "В плейлисте пока тихо",
-                            if (query.isNotBlank()) "Измените запрос или вернитесь ко всем трекам."
-                            else "Добавьте музыку из медиатеки, чтобы слушать её вместе.",
-                            Icons.Rounded.QueueMusic,
-                            if (query.isNotBlank()) "Все треки" else if (album.playlist != null) "Добавить треки" else null,
-                            onAction = { if (query.isNotBlank()) query = "" else album.playlist?.let(actions.onEdit) },
-                            modifier = Modifier.padding(16.dp),
-                        )
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            AlbumEmptyState(
+                                if (query.isNotBlank()) "Такого трека здесь нет" else "В плейлисте пока тихо",
+                                if (query.isNotBlank()) "Измените запрос или вернитесь ко всем трекам."
+                                else "Добавьте музыку из медиатеки, чтобы слушать её вместе.",
+                                Icons.Rounded.QueueMusic,
+                                if (query.isNotBlank()) "Все треки" else if (album.playlist != null) "Добавить треки" else null,
+                                onAction = { if (query.isNotBlank()) query = "" else album.playlist?.let(actions.onEdit) },
+                                modifier = Modifier.widthIn(max = 720.dp).padding(16.dp),
+                            )
+                        }
                     }
                 }
                 if (sameArtist.isNotEmpty() && query.isBlank()) {
                     item(key = "related") {
-                        Text("Ещё у исполнителя", fontFamily = font, style = MaterialTheme.typography.titleMedium,
-                            modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 12.dp))
-                        // Related covers have no shared key, so they cannot steal the return
-                        // match from the overview grid.
-                        androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                            items(sameArtist.size) { index ->
-                                val related = sameArtist[index]
-                                Card(onClick = { actions.onOpen(related.key) }, modifier = Modifier.width(148.dp),
-                                    colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow)) {
-                                    OptimizedAlbumArt(related.artwork.firstOrNull(), related.title,
-                                        Modifier.fillMaxWidth().aspectRatio(1f).clip(MaterialTheme.shapes.large), CoilSize(360, 360))
-                                    Text(related.title, fontFamily = font, style = MaterialTheme.typography.titleSmall,
-                                        maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(12.dp))
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Column(Modifier.widthIn(max = 720.dp)) {
+                                Text("Ещё у исполнителя", fontFamily = font, style = MaterialTheme.typography.titleMedium,
+                                    modifier = Modifier.padding(start = 20.dp, top = 24.dp, bottom = 12.dp))
+                                // Related covers have no shared key, so they cannot steal the return
+                                // match from the overview grid.
+                                androidx.compose.foundation.lazy.LazyRow(contentPadding = PaddingValues(horizontal = 16.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                    items(sameArtist.size) { index ->
+                                        val related = sameArtist[index]
+                                        Card(onClick = { actions.onOpen(related.key) }, modifier = Modifier.width(148.dp),
+                                            colors = CardDefaults.cardColors(containerColor = colors.surfaceContainerLow)) {
+                                            OptimizedAlbumArt(related.artwork.firstOrNull(), related.title,
+                                                Modifier.fillMaxWidth().aspectRatio(1f).clip(MaterialTheme.shapes.large), CoilSize(360, 360))
+                                            Text(related.title, fontFamily = font, style = MaterialTheme.typography.titleSmall,
+                                                maxLines = 2, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(12.dp))
+                                        }
+                                    }
                                 }
                             }
                         }
