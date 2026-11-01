@@ -336,7 +336,9 @@ class NowPlayingHttpServer(
                     "Playlist has no cover"
                 ).withCors()
             val bytes = context.contentResolver.openInputStream(artworkUri)?.use { it.readBytes() }
-            if (bytes.isNullOrEmpty()) {
+            // ByteArray? не имеет isNullOrEmpty() в stdlib — проверяем null и пустоту явно,
+            // после чего bytes смарт-кастится в не-null для кода ниже.
+            if (bytes == null || bytes.isEmpty()) {
                 return newFixedLengthResponse(
                     Response.Status.NOT_FOUND,
                     MIME_PLAINTEXT,
