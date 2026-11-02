@@ -204,11 +204,10 @@ internal fun OnlineSearchContent(
         selectedUrls = if (url in selectedUrls) selectedUrls - url else selectedUrls + url
     }
     val filteredSongs = songs.filter { song ->
-        val effective = variantPicks[song.downloadUrl] ?: song
         when (filter) {
             SearchFilter.All -> true
-            SearchFilter.NotDownloaded -> !state.isDownloaded(effective.downloadUrl)
-            SearchFilter.Downloaded -> state.isDownloaded(effective.downloadUrl)
+            SearchFilter.NotDownloaded -> !state.isDownloaded(song.downloadUrl)
+            SearchFilter.Downloaded -> state.isDownloaded(song.downloadUrl)
         }
     }
 
@@ -234,21 +233,15 @@ internal fun OnlineSearchContent(
                             },
                             actions = {
                                 IconButton(onClick = {
-                                    val visibleUrls = filteredSongs.map {
-                                        (variantPicks[it.downloadUrl] ?: it).downloadUrl
-                                    }.toSet()
+                                    val visibleUrls = filteredSongs.map { it.downloadUrl }.toSet()
                                     selectedUrls = if (selectedUrls.containsAll(visibleUrls)) emptySet() else visibleUrls
                                 }) { Icon(Icons.Rounded.SelectAll, "Выбрать все") }
                                 FilledTonalIconButton(
-                                    enabled = songs.map { variantPicks[it.downloadUrl] ?: it }.any {
-                                        it.downloadUrl in selectedUrls && !state.isDownloaded(it.downloadUrl) &&
-                                            !state.isDownloading(it.downloadUrl)
-                                    },
+                                    enabled = songs.any { it.downloadUrl in selectedUrls &&
+                                        !state.isDownloaded(it.downloadUrl) && !state.isDownloading(it.downloadUrl) },
                                     onClick = {
-                                        songs.map { variantPicks[it.downloadUrl] ?: it }
-                                            .filter { it.downloadUrl in selectedUrls &&
-                                                !state.isDownloaded(it.downloadUrl) &&
-                                                !state.isDownloading(it.downloadUrl) }
+                                        songs.filter { it.downloadUrl in selectedUrls &&
+                                            !state.isDownloaded(it.downloadUrl) && !state.isDownloading(it.downloadUrl) }
                                             .forEach(actions.onDownload)
                                         selectedUrls = emptySet()
                                     },
@@ -361,11 +354,10 @@ internal fun OnlineSearchContent(
                     is OnlineSearchState.Success -> {
                         // Use the target result in AnimatedContent; outgoing content keeps its own data.
                         val visibleSongs = result.songs.filter { song ->
-                            val effective = variantPicks[song.downloadUrl] ?: song
                             when (filter) {
                                 SearchFilter.All -> true
-                                SearchFilter.NotDownloaded -> !state.isDownloaded(effective.downloadUrl)
-                                SearchFilter.Downloaded -> state.isDownloaded(effective.downloadUrl)
+                                SearchFilter.NotDownloaded -> !state.isDownloaded(song.downloadUrl)
+                                SearchFilter.Downloaded -> state.isDownloaded(song.downloadUrl)
                             }
                         }
                         LazyColumn(state = listState, contentPadding = contentPadding,

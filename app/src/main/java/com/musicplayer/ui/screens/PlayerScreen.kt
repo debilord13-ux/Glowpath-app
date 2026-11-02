@@ -1050,8 +1050,6 @@ fun TrackSettingsOverlay(
                             add(SheetAction(Icons.Rounded.Lyrics, "Редактор текста", "Тайминги строк и слов вручную") { onEditLyrics() })
                         }
                         add(SheetAction(Icons.Rounded.Equalizer, "Эквалайзер", "Пресеты, полосы частот и 3D-звук") { showEqualizerSheet = true })
-                        add(SheetAction(Icons.Rounded.GraphicEq, "Нормализация громкости", "Одинаковая громкость у разных треков", soon = true) {})
-                        add(SheetAction(Icons.Rounded.Tune, "Буст баса", "Усиление низких частот", soon = true) {})
                         add(SheetAction(Icons.Rounded.AddAlert, "Поставить на звонок", "Сделать этот трек мелодией входящего вызова") { onSetRingtone() })
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {

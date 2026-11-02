@@ -216,7 +216,6 @@ fun SettingsScreen(
                     onStats = onStatsClick,
                     onAbout = openAbout,
                     onSort = { showSortSheet = true },
-                    onNormalization = { viewModel.updateSettings(settings.copy(loudnessNormalizationEnabled = !settings.loudnessNormalizationEnabled)) },
                     onWavySeekBar = { viewModel.updateSettings(settings.copy(useWavySeekBar = !settings.useWavySeekBar)) },
                     onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) },
                     onColoredQueuePanel = { viewModel.updateSettings(settings.copy(coloredQueuePanel = !settings.coloredQueuePanel)) }
@@ -281,17 +280,6 @@ fun SettingsScreen(
                 visible = settingsQuery.isBlank()
             ) {
                 SettingsSwitchItem(
-                    icon = Icons.Rounded.Shuffle,
-                    iconBg = MaterialTheme.colorScheme.secondary,
-                    title = "Перемешивание",
-                    subtitle = "Случайный порядок треков",
-                    checked = settings.shuffleEnabled,
-                    onCheckedChange = {
-                        viewModel.updateSettings(settings.copy(shuffleEnabled = it))
-                    }
-                )
-                SettingsGroupDivider()
-                SettingsSwitchItem(
                     icon = Icons.Rounded.ShowChart,
                     iconBg = MaterialTheme.colorScheme.primary,
                     title = "Волнистый ползунок",
@@ -355,21 +343,6 @@ fun SettingsScreen(
                     title = "Эквалайзер",
                     subtitle = "Пресеты и настройка звучания",
                     onClick = onEqualizerClick
-                )
-                SettingsGroupDivider()
-                SettingsSwitchItem(
-                    icon = Icons.Rounded.Equalizer,
-                    iconBg = MaterialTheme.colorScheme.secondary,
-                    title = "Нормализация громкости",
-                    subtitle = if (settings.loudnessNormalizationEnabled) {
-                        "Слишком громкие треки плавно приглушаются до общего уровня (−14 LUFS)"
-                    } else {
-                        "Каждый трек играет с исходной громкостью записи"
-                    },
-                    checked = settings.loudnessNormalizationEnabled,
-                    onCheckedChange = {
-                        viewModel.updateSettings(settings.copy(loudnessNormalizationEnabled = it))
-                    }
                 )
             }
 
@@ -623,7 +596,6 @@ private fun SettingsSearchResults(
     onStats: () -> Unit,
     onAbout: () -> Unit,
     onSort: () -> Unit,
-    onNormalization: () -> Unit,
     onWavySeekBar: () -> Unit,
     onColoredButtons: () -> Unit,
     onColoredQueuePanel: () -> Unit
@@ -637,7 +609,6 @@ private fun SettingsSearchResults(
         Triple("Переходы", "Кроссфейд и смена треков", Icons.Rounded.SwapHoriz) to onTransitions,
         Triple("Таймер сна", "Остановка после трека и затухание", Icons.Rounded.Bedtime) to onSleepTimer,
         Triple("Эквалайзер", "Пресеты и настройка звучания", Icons.Rounded.GraphicEq) to onEqualizer,
-        Triple("Нормализация громкости", "Единая громкость треков", Icons.Rounded.Equalizer) to onNormalization,
         Triple("Сортировка", "Название, исполнитель, альбом, длительность и дата добавления", Icons.Rounded.Sort) to onSort,
         Triple("Волнистый ползунок", "Анимированный seek bar в плеере", Icons.Rounded.ShowChart) to onWavySeekBar,
         Triple("Кнопки в цвет трека", "Раскраска кнопок плеера под обложку", Icons.Rounded.Colorize) to onColoredButtons,
