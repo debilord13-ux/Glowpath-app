@@ -432,9 +432,7 @@ object LoudnessNormalizer {
                 hopL.add(0.0); hopR.add(0.0); hopFilled.add(true)
             }
             currentSumL += square(filterL.process(l))
-            if (channels > 1) {
-                currentSumR += square(filterR.process(r))
-            }
+            currentSumR += square(if (channels > 1) filterR.process(r) else filterL.process(r))
             samplesInHop++
             if (samplesInHop >= hopTarget) {
                 finalizeHop()
