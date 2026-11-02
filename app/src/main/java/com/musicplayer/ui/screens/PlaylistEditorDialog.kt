@@ -106,8 +106,10 @@ private enum class EditorSortMode {
 private fun sortEditorSongs(list: List<Song>, mode: EditorSortMode): List<Song> = when (mode) {
     EditorSortMode.TITLE  -> list.sortedBy { it.displayTitle().lowercase() }
     EditorSortMode.RECENT -> list.sortedByDescending { it.id }
-    EditorSortMode.ARTIST -> list.sortedBy { it.displayArtist().lowercase() }
-        .thenBy { it.displayTitle().lowercase() }
+    EditorSortMode.ARTIST -> list.sortedWith(
+        compareBy<Song> { it.displayArtist().lowercase() }
+            .thenBy { it.displayTitle().lowercase() }
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
