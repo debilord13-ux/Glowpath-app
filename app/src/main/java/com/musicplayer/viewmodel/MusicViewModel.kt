@@ -6,11 +6,14 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.PlaybackParams
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.musicplayer.bridge.ExteraGramBridgeBatchItem
@@ -27,7 +30,6 @@ import com.musicplayer.data.lyrics.LyricsRepository
 import com.musicplayer.data.lyrics.LyricsState
 import com.musicplayer.data.lyrics.SyncedLine
 import com.musicplayer.data.player.DualPlayerEngine
-import com.musicplayer.data.player.LoudnessNormalizer
 import com.musicplayer.data.player.TransitionController
 import com.musicplayer.data.stats.PlaybackStatsRepository
 import com.musicplayer.repository.MusicRepository
@@ -40,7 +42,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.UUID
 
 class MusicViewModel(application: Application) : AndroidViewModel(application) {
@@ -307,23 +308,19 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         applyVolumeWithBalance()
     }
 
-    /** Apply current volume + preamp + balance (+ normalization of current track) to the player.
-     *  В движок отдаём громкость БЕЗ гейна нормализации — он применяет пер-плеерные гейны сам,
-     *  иначе фактор учитывался бы дважды (в кроссфейде и тут). */
+    /** Apply current volume + preamp + balance to the player. */
     private fun applyVolumeWithBalance() {
         val (left, right) = currentUserVolumePair()
-        val norm = currentLoudnessFactor(_currentSong.value)
-        mediaPlayer?.setVolume((left * norm).coerceIn(0f, 1f), (right * norm).coerceIn(0f, 1f))
+        mediaPlayer?.setVolume(left.coerceIn(0f, 1f), right.coerceIn(0f, 1f))
         dualEngine.setUserVolume(left, right)
     }
 
-    /** Прямая установка громкости активному плееру с учётом всех факторов (для фейдов сна). */
+    /** Прямая установка громкости активному плееру (для фейдов сна/утки). */
     private fun applyPlaybackVolume(fraction: Float) {
         val (left, right) = currentUserVolumePair()
-        val norm = currentLoudnessFactor(_currentSong.value)
         mediaPlayer?.setVolume(
-            (left * norm * fraction).coerceIn(0f, 1f),
-            (right * norm * fraction).coerceIn(0f, 1f)
+            (left * fraction).coerceIn(0f, 1f),
+            (right * fraction).coerceIn(0f, 1f)
         )
     }
 
@@ -366,9 +363,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var bridgeLastBatchSummary: String = ""
 
     private var mediaPlayer: MediaPlayer? = null
-    private var pendingPlayer: MediaPlayer? = null
-    private var preparingPreviousPlayer: MediaPlayer? = null
-    private var pendingShouldPlay: Boolean = true
     private var progressJob: Job? = null
     private var musicService: MusicService? = null
     /** Поколение запроса воспроизведения: устаревшие prepare-колбэки отбрасываются. */
@@ -391,6 +385,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             musicService = (service as MusicService.MusicBinder).getService().also { svc ->
                 svc.onPlayPause = { togglePlayPause() }
+                // Семантические команды из MediaSession (медиа-кнопки, шторка TG):
+                // НЕ тогглы — «пауза» глушит только играющего, «плей» будит только спящего.
+                svc.onPlayCommand  = { externalPlayCommand() }
+                svc.onPauseCommand = { externalPauseCommand() }
                 svc.onPrev      = { playPrevious() }
                 svc.onNext      = { playNext() }
                 svc.onStop      = { stopPlaybackFromBridge(clearSong = true) }
@@ -411,9 +409,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // Load songs in background — use fast file storage when available,
         // fall back to legacy SharedPreferences on first run (migration)
         viewModelScope.launch(Dispatchers.IO) {
-            // Кэш нормализации громкости грузим заранее, чтобы не читать файл с диска
-            // из onPrepared (main-поток) при первом старте трека.
-            runCatching { LoudnessNormalizer.primeCache(application) }
             val saved: List<Song> = run {
                 // Fast path: file-based JSON (10–20× faster than SharedPrefs for big libraries)
                 val fromFile = SongsFileStorage.load(application)
@@ -1103,6 +1098,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startPlayback(song: Song, rememberHistory: Boolean = true) {
+        // Быстрый путь: движок уже предзагрузил ЭТОТ трек (планировщик кроссфейда
+        // делает это заранее, «во время музыки»). Тогда ручное переключение — из
+        // шторки, из сообщения, из UI — делает мгновенный переход без пересоздания
+        // плеера и без лага на старте.
+        if (tryEngineTransitionTo(song, rememberHistory)) return
+
         if (rememberHistory) rememberPreviousTrack(song)
         flushStatsIfNeeded()  // record previous song before switching
         val generation = ++playbackGeneration
@@ -1113,21 +1114,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // (Раньше: stopPlayback() → блокирующий prepare() → start() — и музыка
         // исчезала на всё время подготовки.)
         stopProgressTracking()
-        val oldPlayer = mediaPlayer ?: preparingPreviousPlayer
-        pendingPlayer?.let { stale ->
-            try { stale.setOnPreparedListener(null) } catch (_: Exception) {}
-            try { stale.setOnErrorListener(null) } catch (_: Exception) {}
-            try { stale.release() } catch (_: Exception) {}
-        }
-        pendingPlayer = null
-        val oldLoudnessFactor = currentLoudnessFactor(_currentSong.value)
+        val oldPlayer = mediaPlayer
         // Старый плеер доживает до готовности нового — снимаем с него completion,
         // чтобы его конец посреди переключения не запускал playNext().
         try { oldPlayer?.setOnCompletionListener(null) } catch (_: Exception) {}
-        preparingPreviousPlayer = oldPlayer
-        pendingShouldPlay = oldPlayer?.let { runCatching { it.isPlaying }.getOrDefault(false) } ?: true
         mediaPlayer = null
-        _isPlaying.value = pendingShouldPlay
+        _isPlaying.value = false
         _currentPosition.value = 0
         _duration.value = 0L
         dualEngine.notifyMasterReleased()
@@ -1146,13 +1138,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 isLooping = (_settings.value.repeatMode == RepeatMode.ONE)
             }
             player.setOnErrorListener { mp, what, extra ->
-                if (generation != playbackGeneration || (mediaPlayer !== mp && pendingPlayer !== mp)) {
-                    return@setOnErrorListener true
-                }
+                if (generation != playbackGeneration || mediaPlayer !== mp) return@setOnErrorListener true
                 android.util.Log.w("MusicViewModel", "Ошибка плеера: what=$what extra=$extra")
                 // Не смогли начать играть — возвращаем старый плеер, чтобы музыка не прервалась.
-                if (pendingPlayer === mp) pendingPlayer = null
-                preparingPreviousPlayer = null
                 try { mp.release() } catch (_: Exception) {}
                 if (oldPlayer != null) {
                     mediaPlayer = oldPlayer
@@ -1172,7 +1160,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 true
             }
             playerRef = player
-            pendingPlayer = player
             // Completion сразу: иначе до первого кроссфейда конец трека никто не поймает.
             // Guard по ссылке — завершение устаревшего/затухающего плеера не вызывает playNext().
             player.setOnCompletionListener { mp ->
@@ -1186,37 +1173,39 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     return@setOnPreparedListener
                 }
                 try {
-                    // Новый трек стартует сразу, старый коротко затухает параллельно —
-                    // смена без щелчка и без тишины.
-                    val shouldPlay = pendingShouldPlay
-                    if (shouldPlay) mp.start()
-                    if (shouldPlay && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    // Эквалайзер цепляем ДО старта: звуковой тракт уже собран, и начало
+                    // трека не щёлкает от перестройки аудиоэффектов на ходу.
+                    try { attachEqualizerToSession(mp.audioSessionId) } catch (_: Exception) {}
+
+                    // Фокус запрашиваем ДО старта звука: если его уже забрал гс/навигатор,
+                    // система сразу даст LOSS и мы не начнём играть поверх чужого звука.
+                    requestAudioFocusIfNeeded()
+
+                    val switchFadeMs = if (_transitionSettings.value.isEnabled && oldPlayer != null) {
+                        _transitionSettings.value.durationMs.toLong().coerceAtLeast(120L)
+                    } else 0L
+                    if (switchFadeMs > 0L) mp.setVolume(0f, 0f)
+
+                    mp.start()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         try {
                             mp.playbackParams = PlaybackParams().apply { speed = _playbackSpeed.value }
                         } catch (_: Exception) {}
                     }
 
                     mediaPlayer        = mp
-                    if (pendingPlayer === mp) pendingPlayer = null
-                    preparingPreviousPlayer = null
-                    _currentSong.value = song   // сначала песня: от неё считается нормализация
-                    applyVolumeWithBalance()   // apply volume + preamp + balance + normalization
-                    _isPlaying.value   = shouldPlay
+                    _currentSong.value = song
+                    _isPlaying.value   = true
                     _duration.value    = try { mp.duration.toLong() } catch (_: Exception) { song.duration }
-                    if (shouldPlay) {
-                        trackingStartMs = System.currentTimeMillis()
-                        trackingSongId = song.id
-                        startProgressTracking()
-                    } else {
-                        stopProgressTracking()
-                    }
+                    trackingStartMs    = System.currentTimeMillis()
+                    trackingSongId     = song.id
+                    startProgressTracking()
                     loadLyricsForSong(song)
                     pushNotificationState(forceMetadata = true)
                     syncBridgeState()
 
                     // Передаём плеер в движок и планируем переход
-                    dualEngine.setMasterPlayer(mp)
-                    dualEngine.setMasterLoudnessGain(currentLoudnessFactor(song))
+                    dualEngine.setMasterPlayer(mp, if (switchFadeMs > 0L) 0f else 1f)
                     dualEngine.setPlaybackSpeed(_playbackSpeed.value)
                     dualEngine.onPlayerSwapped = { newMaster ->
                         // Вызывается когда кроссфейд поменял плееры местами —
@@ -1230,12 +1219,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         try { newMaster.isLooping = (_settings.value.repeatMode == RepeatMode.ONE) } catch (_: Exception) {}
                         try { attachEqualizerToSession(newMaster.audioSessionId) } catch (_: Exception) {}
                     }
-                    // Attach equalizer effects to the new MediaPlayer's audio session
-                    try { attachEqualizerToSession(mp.audioSessionId) } catch (_: Exception) {}
-                    if (shouldPlay) scheduleNextTransition(song)
-                    ensureLoudnessAnalyzed(song)
 
-                    fadeOutAndRelease(oldPlayer, generation, oldLoudnessFactor)
+                    if (switchFadeMs > 0L && oldPlayer != null) {
+                        crossfadeManualSwitch(oldPlayer, mp, switchFadeMs, generation)
+                        // Предзагрузку следующего планируем ПОСЛЕ фейда — планировщик
+                        // трогает громкость мастера и затёр бы разгон нового трека.
+                    } else {
+                        applyVolumeWithBalance()
+                        fadeOutAndRelease(oldPlayer, generation)
+                        scheduleNextTransition(song)
+                    }
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
@@ -1248,8 +1241,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 playerRef?.setOnCompletionListener(null)
                 playerRef?.release()
             }
-            if (pendingPlayer === playerRef) pendingPlayer = null
-            preparingPreviousPlayer = null
             mediaPlayer = oldPlayer
             if (oldPlayer != null) {
                 _isPlaying.value = try { oldPlayer.isPlaying } catch (_: Exception) { false }
@@ -1268,14 +1259,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Плавно глушит и освобождает старый плеер после старта нового.
-     * Короткий (≈160 мс) затухание вместо мгновенного release() — без щелчка.
+     * Короткое (≈160 мс) затухание вместо мгновенного release() — без щелчка.
      */
-    private fun fadeOutAndRelease(player: MediaPlayer?, generation: Long, loudnessFactor: Float = 1f) {
+    private fun fadeOutAndRelease(player: MediaPlayer?, generation: Long) {
         if (player == null) return
         viewModelScope.launch(Dispatchers.Main) {
-            val (baseLeft, baseRight) = currentUserVolumePair().let { (l, r) ->
-                (l * loudnessFactor).coerceIn(0f, 1f) to (r * loudnessFactor).coerceIn(0f, 1f)
-            }
+            val (baseLeft, baseRight) = currentUserVolumePair()
             val steps = 8
             repeat(steps) { i ->
                 // Гард только для setVolume: при смене поколения плеер уже ничей,
@@ -1292,6 +1281,52 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Кроссфейд ручного переключения: новый плеер разгоняется 0→1, старый параллельно
+     * гаснет 1→0. Работает для ЛЮБОГО источника команды — кнопки в шторке, медиа-кнопки,
+     * сообщение из ExteraGram, тап по треку: все они сходятся в startPlayback().
+     * По завершении освобождает старый плеер и планирует предзагрузку следующего трека.
+     */
+    private fun crossfadeManualSwitch(
+        oldPlayer: MediaPlayer,
+        newPlayer: MediaPlayer,
+        fadeMs: Long,
+        generation: Long,
+    ) {
+        viewModelScope.launch(Dispatchers.Main) {
+            val (l, r) = currentUserVolumePair()
+            val startAt = SystemClock.uptimeMillis()
+            val stepMs = 20L
+            while (true) {
+                val progress = ((SystemClock.uptimeMillis() - startAt).toFloat() / fadeMs).coerceIn(0f, 1f)
+                // Старый гасим всегда: он «ничей» и в конце обязан освободиться.
+                try {
+                    oldPlayer.setVolume(
+                        (l * (1f - progress)).coerceIn(0f, 1f),
+                        (r * (1f - progress)).coerceIn(0f, 1f)
+                    )
+                } catch (_: Exception) {}
+                if (generation == playbackGeneration) {
+                    try {
+                        newPlayer.setVolume((l * progress).coerceIn(0f, 1f), (r * progress).coerceIn(0f, 1f))
+                    } catch (_: Exception) {}
+                }
+                if (progress >= 1f) break
+                delay(stepMs)
+            }
+            if (mediaPlayer !== oldPlayer) {
+                // Плеер не восстанавливали после ошибки — можно освобождать.
+                try { oldPlayer.setOnCompletionListener(null) } catch (_: Exception) {}
+                try { if (oldPlayer.isPlaying) oldPlayer.stop() } catch (_: Exception) {}
+                try { oldPlayer.release() } catch (_: Exception) {}
+            }
+            applyVolumeWithBalance()
+            // Только теперь планируем переход/предзагрузку: планировщик трогает громкость
+            // мастера и затёр бы разгон нового трека, если запустить его раньше.
+            _currentSong.value?.let { scheduleNextTransition(it) }
+        }
+    }
+
     /** Пользовательская громкость (после preamp и баланса) — база для затухания старого плеера. */
     private fun currentUserVolumePair(): Pair<Float, Float> {
         val vol = _volume.value
@@ -1303,42 +1338,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         return left to right
     }
 
-    // ── Нормализация громкости ───────────────────────────────────────────────
-
-    /** Множитель громкости трека из кэша анализа (1.0 — если анализа ещё нет/выключено). */
-    private fun currentLoudnessFactor(song: Song?): Float {
-        if (song == null) return 1f
-        if (!_settings.value.loudnessNormalizationEnabled) return 1f
-        return LoudnessNormalizer.cachedFactor(getApplication(), song)
-    }
-
-    /**
-     * Фоново анализирует трек (если он ещё не в кэше) и после готовности
-     * переприменяет громкость — без блокировки воспроизведения.
-     * Следующий трек анализируется заранее, чтобы кроссфейд уже шёл с его гейном.
-     */
-    private fun ensureLoudnessAnalyzed(song: Song) {
-        if (!_settings.value.loudnessNormalizationEnabled) return
-        viewModelScope.launch(Dispatchers.IO) {
-            val analyzed = try {
-                LoudnessNormalizer.ensureAnalyzed(getApplication(), song)
-            } catch (_: Exception) { false }
-            if (analyzed) {
-                launch(Dispatchers.Main) {
-                    if (_currentSong.value?.id == song.id && _settings.value.loudnessNormalizationEnabled) {
-                        applyVolumeWithBalance()
-                        dualEngine.setMasterLoudnessGain(currentLoudnessFactor(song))
-                    }
-                }
-            }
-            // Подготавливаем и следующий — чтобы кроссфейд сразу шёл выровненно.
-            // peekNextSong мутирует shuffle-состояние — только с Main-потока.
-            try {
-                val next = withContext(Dispatchers.Main) { peekNextSong(song) }
-                next?.let { LoudnessNormalizer.ensureAnalyzed(getApplication(), it) }
-            } catch (_: Exception) {}
-        }
-    }
+    // ── Планирование кроссфейда ──────────────────────────────────────────────
 
     /** Планирует кроссфейд к следующему треку (если включено). */
     private fun scheduleNextTransition(currentSong: Song) {
@@ -1353,69 +1353,107 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
         val nextSong = peekNextSong(currentSong) ?: return
 
-        // Заранее передаём движку гейн нормализации следующего трека: тогда кроссфейд
-        // идёт с выровненной громкостью (громкий трек больше не «перекрикивает» тихий).
-        dualEngine.setNextLoudnessGain(currentLoudnessFactor(nextSong))
-
         transitionCtrl.scheduleTransition(
-            currentSong         = currentSong,
-            nextSong            = nextSong,
-            getPositionMs       = {
+            currentSong          = currentSong,
+            nextSong             = nextSong,
+            getPositionMs        = {
                 try { mediaPlayer?.currentPosition?.toLong() ?: 0L } catch (_: Exception) { 0L }
             },
-            getDurationMs       = {
+            getDurationMs        = {
                 try { mediaPlayer?.duration?.toLong()?.coerceAtLeast(0L) ?: 0L } catch (_: Exception) { 0L }
             },
-            settings            = settings,
-            onTransitionComplete = {
-                // Кроссфейд завершён — финализируем (метаданные уже обновлены при onPlayerSwapped)
-                flushStatsIfNeeded()
-                _duration.value = try {
-                    mediaPlayer?.duration?.toLong() ?: nextSong.duration
-                } catch (_: Exception) {
-                    nextSong.duration
-                }
-                applyVolumeWithBalance()
-                // Планируем следующий переход
-                scheduleNextTransition(nextSong)
-            },
-            onSwapReady = { swappedToSong ->
-                // Вызывается в начале кроссфейда — обновляем UI немедленно
-                // чтобы название/обложка соответствовали уже играющему треку.
-                // Кроссфейд не проходит через startPlayback(), поэтому запоминаем
-                // предыдущий трек здесь тоже.
-                rememberPreviousTrack(swappedToSong)
-                _currentSong.value  = swappedToSong
-                // Индекс и «съедание» shuffle-очереди считаем в активном списке
-                // (плейлист, если он запущен, иначе библиотека) — иначе кроссфейд
-                // рассинхронизирует shuffle с плейлистом.
-                val list = activePlaybackSongs()
-                val idx = list.indexOfFirst { it.id == swappedToSong.id }
-                if (idx >= 0) {
-                    if (resolveBridgeQueueSongs().isEmpty()) {
-                        _currentIndex.value = idx
-                    }
-                    // Кроссфейд не проходит через playNext(), поэтому «съедаем» трек из
-                    // shuffle-очереди здесь. Иначе он оставался первым в очереди, и
-                    // кнопка «Следующий» запускала ту же самую песню заново.
-                    if (_settings.value.shuffleEnabled && shuffleRemaining.remove(idx)) {
-                        _queueRevision.value += 1
-                    }
-                }
-                trackingStartMs     = System.currentTimeMillis()
-                trackingSongId      = swappedToSong.id
-                _currentPosition.value = 0L
-                _duration.value = try {
-                    mediaPlayer?.duration?.toLong() ?: swappedToSong.duration
-                } catch (_: Exception) {
-                    swappedToSong.duration
-                }
-                _isPlaying.value = true
-                loadLyricsForSong(swappedToSong)
-                pushNotificationState(forceMetadata = true)
-                syncBridgeState()
-            }
+            settings             = settings,
+            onTransitionComplete = { finishEngineTransition(nextSong) },
+            onSwapReady          = { swappedToSong -> swapUiToSong(swappedToSong, recordHistory = true) }
         )
+    }
+
+    /** Финализация после кроссфейда (метаданные уже обновлены при onPlayerSwapped). */
+    private fun finishEngineTransition(nextSong: Song) {
+        flushStatsIfNeeded()
+        _duration.value = try {
+            mediaPlayer?.duration?.toLong() ?: nextSong.duration
+        } catch (_: Exception) {
+            nextSong.duration
+        }
+        applyVolumeWithBalance()
+        // Планируем следующий переход
+        scheduleNextTransition(nextSong)
+    }
+
+    /**
+     * Обновление UI в начале кроссфейда: название/обложка соответствуют уже играющему
+     * треку. Используется и плановым кроссфейдом, и ручным переходом на предзагруженный
+     * трек (tryEngineTransitionTo).
+     */
+    private fun swapUiToSong(swappedToSong: Song, recordHistory: Boolean) {
+        // Сначала сбрасываем статистику ИСХОДЯЩЕГО трека: после смены
+        // trackingSongId накопленное время прослушивания потерялось бы.
+        flushStatsIfNeeded()
+        if (recordHistory) {
+            rememberPreviousTrack(swappedToSong)
+        }
+        _currentSong.value  = swappedToSong
+        // Индекс и «съедание» shuffle-очереди считаем в активном списке
+        // (плейлист, если он запущен, иначе библиотека) — иначе кроссфейд
+        // рассинхронизирует shuffle с плейлистом.
+        val list = activePlaybackSongs()
+        val idx = list.indexOfFirst { it.id == swappedToSong.id }
+        if (idx >= 0) {
+            if (resolveBridgeQueueSongs().isEmpty()) {
+                _currentIndex.value = idx
+            }
+            // Кроссфейд не проходит через playNext(), поэтому «съедаем» трек из
+            // shuffle-очереди здесь. Иначе он оставался первым в очереди, и
+            // кнопка «Следующий» запускала ту же самую песню заново.
+            if (_settings.value.shuffleEnabled && shuffleRemaining.remove(idx)) {
+                _queueRevision.value += 1
+            }
+        }
+        trackingStartMs     = System.currentTimeMillis()
+        trackingSongId      = swappedToSong.id
+        _currentPosition.value = 0L
+        _duration.value = try {
+            mediaPlayer?.duration?.toLong() ?: swappedToSong.duration
+        } catch (_: Exception) {
+            swappedToSong.duration
+        }
+        _isPlaying.value = true
+        startProgressTracking()
+        loadLyricsForSong(swappedToSong)
+        pushNotificationState(forceMetadata = true)
+        syncBridgeState()
+    }
+
+    /**
+     * Мгновенный ручной переход на трек, который движок уже предзагрузил
+     * («во время музыки», за несколько секунд до конца текущего).
+     * Возвращает true, если переход выполнен — тогда startPlayback не нужен.
+     *
+     * Так «Следующий» из шторки, медиа-кнопок или сообщения ExteraGram работает
+     * без пересоздания плеера: трек уже готов и стартует мгновенно, с кроссфейдом.
+     */
+    private fun tryEngineTransitionTo(song: Song, rememberHistory: Boolean): Boolean {
+        if (!_transitionSettings.value.isEnabled) return false
+        if (dualEngine.isTransitionRunning()) return false
+        if (!dualEngine.isNextPrepared()) return false
+        if (dualEngine.lastPreparedUri != song.uri) return false
+        val current = _currentSong.value ?: return false
+        if (current.id == song.id) return false
+
+        // Фокус нужен сразу: после быстрого перехода трек уже играет, и потеря
+        // фокуса (гс, навигатор) обязана нас услышать с первой секунды.
+        requestAudioFocusIfNeeded()
+
+        // Планировщик старого трека больше не нужен, но playerB трогать нельзя —
+        // он сейчас станет мастером.
+        transitionCtrl.cancelSchedulerOnly()
+        dualEngine.performTransition(_transitionSettings.value,
+            onTransitionComplete = { finishEngineTransition(song) }
+        ) {
+            swapUiToSong(song, recordHistory = rememberHistory)
+        }
+        return true
     }
 
     /** Следующий трек без запуска playback — для планирования кроссфейда. */
@@ -1479,43 +1517,168 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         trackingSongId  = -1L
     }
 
-    fun togglePlayPause() {
-        val player = mediaPlayer
-        if (player == null && pendingPlayer != null) {
-            val shouldPlay = !_isPlaying.value
-            pendingShouldPlay = shouldPlay
-            _isPlaying.value = shouldPlay
-            preparingPreviousPlayer?.let { previous ->
-                try {
-                    if (shouldPlay) previous.start() else if (previous.isPlaying) previous.pause()
-                } catch (_: Exception) {}
+    // ── Audio focus: гс в Telegram, навигатор, звонки ─────────────────────────
+    //
+    // Правила ровно как просил пользователь:
+    //  • играли → гс начался → пауза; гс закончился → играем дальше;
+    //  • уже стояли на паузе → гс ничего не меняет (музыка НЕ включается);
+    //  • фокус забрал другой музыкальный плеер → останавливаемся без автопродолжения.
+    private val audioManager by lazy {
+        getApplication<Application>().getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    }
+    private var focusHeld = false
+    /** Играли до временной потери фокуса — вернуть воспроизведение после него. */
+    private var resumeOnFocusGain = false
+    private var duckedByFocus = false
+    /** Внешняя «пауза» пришла, когда мы уже молчали (гс в TG): её «плей» после
+     *  гса один раз проглатываем — пользователь музыку сам не включал.
+     *  TTL — если ожидаемый «плей» так и не пришёл, флаг устаревает. */
+    private var swallowNextExternalPlay = false
+    private var swallowNextExternalPlayAt = 0L
+
+    /** Современный API фокуса (API 26+). */
+    private val focusRequest by lazy {
+        AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                    .build()
+            )
+            .setOnAudioFocusChangeListener(focusListener)
+            .build()
+    }
+
+    private val focusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        when (change) {
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                if (_isPlaying.value) {
+                    resumeOnFocusGain = true
+                    pausePlaybackInternal(abandonFocus = false)
+                } else {
+                    // И так молчали — после гса ничего не включаем.
+                    resumeOnFocusGain = false
+                }
             }
-            if (shouldPlay && preparingPreviousPlayer != null) startProgressTracking()
-            else stopProgressTracking()
-            if (!shouldPlay) flushStatsIfNeeded()
-            pushNotificationState(forceMetadata = true)
-            syncBridgeState()
-            return
+            AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                // Короткий фон (звук уведомления): приглушаемся, не останавливаясь.
+                // Только через движок: мастер и предзагруженный плеер там оба,
+                // и двойного умножения громкости не будет.
+                if (_isPlaying.value) {
+                    duckedByFocus = true
+                    dualEngine.setDuckFactor(DUCK_VOLUME)
+                }
+            }
+            AudioManager.AUDIOFOCUS_GAIN -> {
+                if (duckedByFocus) {
+                    duckedByFocus = false
+                    if (_isPlaying.value) applyPlaybackVolume(1f)
+                    dualEngine.setDuckFactor(1f)
+                } else if (resumeOnFocusGain && !_isPlaying.value) {
+                    // Возвращаем ТОЛЬКО то, что сами поставили на паузу из-за фокуса.
+                    resumeOnFocusGain = false
+                    resumePlaybackInternal()
+                } else {
+                    resumeOnFocusGain = false
+                }
+            }
+            AudioManager.AUDIOFOCUS_LOSS -> {
+                // Фокус надолго забрал другой плеер — встаём без автопродолжения.
+                resumeOnFocusGain = false
+                if (_isPlaying.value) pausePlaybackInternal(abandonFocus = false)
+                abandonAudioFocus()
+            }
         }
-        if (player == null) return
-        val song   = _currentSong.value ?: return
-        if (_isPlaying.value) {
-            flushStatsIfNeeded()
-            dualEngine.pause()
-            try { if (player.isPlaying) player.pause() } catch (_: Exception) {}
-            _isPlaying.value = false
-            stopProgressTracking()
-            pushNotificationState(forceMetadata = true)
-        } else {
-            dualEngine.resume()
-            try { player.start() } catch (_: Exception) {}
+    }
+
+    private fun requestAudioFocusIfNeeded(): Boolean {
+        if (focusHeld) return true
+        // AudioFocusRequest — с API 26 (наш minSdk), немой requestAudioFocus(...) устарел.
+        val result = runCatching {
+            audioManager.requestAudioFocus(focusRequest)
+        }.getOrDefault(AudioManager.AUDIOFOCUS_REQUEST_FAILED)
+        focusHeld = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        return focusHeld
+    }
+
+    private fun abandonAudioFocus() {
+        if (focusHeld) {
+            runCatching { audioManager.abandonAudioFocusRequest(focusRequest) }
+            focusHeld = false
+        }
+        duckedByFocus = false
+        resumeOnFocusGain = false
+        dualEngine.setDuckFactor(1f)
+    }
+
+    /** Внутренняя пауза без тоггла. [abandonFocus] — отдавать ли фокус системе. */
+    private fun pausePlaybackInternal(abandonFocus: Boolean) {
+        val player = mediaPlayer ?: return
+        flushStatsIfNeeded()
+        dualEngine.pause()
+        try { if (player.isPlaying) player.pause() } catch (_: Exception) {}
+        _isPlaying.value = false
+        stopProgressTracking()
+        pushNotificationState(forceMetadata = true)
+        syncBridgeState()
+        if (abandonFocus) abandonAudioFocus()
+    }
+
+    /** Внутренний старт/возобновление без тоггла. */
+    private fun resumePlaybackInternal() {
+        val player = mediaPlayer ?: return
+        requestAudioFocusIfNeeded()
+        dualEngine.resume()
+        try { player.start() } catch (_: Exception) {}
+        val song = _currentSong.value
+        if (song != null) {
             trackingStartMs = System.currentTimeMillis()
             trackingSongId  = song.id
-            _isPlaying.value = true
-            startProgressTracking()
-            pushNotificationState(forceMetadata = true)
         }
+        _isPlaying.value = true
+        dualEngine.setDuckFactor(1f)
+        applyPlaybackVolume(1f)
+        startProgressTracking()
+        pushNotificationState(forceMetadata = true)
         syncBridgeState()
+    }
+
+    fun togglePlayPause() {
+        if (_isPlaying.value) {
+            pausePlaybackInternal(abandonFocus = true)
+        } else {
+            // Пользователь сам нажал играть — внешний «плей» больше не глотаем.
+            swallowNextExternalPlay = false
+            resumePlaybackInternal()
+        }
+    }
+
+    /** Семантическое «ИГРАТЬ» извне (медиа-кнопки, шторка Telegram): не тоггл. */
+    fun externalPlayCommand() {
+        if (swallowNextExternalPlay) {
+            swallowNextExternalPlay = false
+            val fresh = SystemClock.uptimeMillis() - swallowNextExternalPlayAt <= SWALLOW_TTL_MS
+            if (fresh) {
+                // Нам посылали «паузу», когда мы уже молчали (гс в TG): его «плей» —
+                // не команда пользователя, музыку самовольно не включаем.
+                return
+            }
+            // Флаг устарел (гс давно кончился, «плей» не пришёл) — считаем команду настоящей.
+        }
+        if (!_isPlaying.value) {
+            resumePlaybackInternal()
+        }
+    }
+
+    /** Семантическая «ПАУЗА» извне: глушим только если реально играем. */
+    fun externalPauseCommand() {
+        if (_isPlaying.value) {
+            pausePlaybackInternal(abandonFocus = false)
+        } else {
+            // Уже молчали — значит «плей» после гса надо проглотить.
+            swallowNextExternalPlay = true
+            swallowNextExternalPlayAt = SystemClock.uptimeMillis()
+        }
     }
 
     fun seekTo(position: Long) {
@@ -1892,22 +2055,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSettings(settings: PlayerSettings) {
-        val normalizationChanged = settings.loudnessNormalizationEnabled != _settings.value.loudnessNormalizationEnabled
         _settings.value = settings
         debouncedSaveSettings(settings)
-        if (normalizationChanged) {
-            // Пересчитываем громкость под новый режим нормализации сразу.
-            applyVolumeWithBalance()
-            _currentSong.value?.let { current ->
-                dualEngine.setMasterLoudnessGain(currentLoudnessFactor(current))
-                if (_transitionSettings.value.mode == TransitionMode.OVERLAP) {
-                    scheduleNextTransition(current)
-                }
-                // Запускаем анализ, если для трека ещё нет данных — иначе фактор
-                // останется 1.0 до смены трека.
-                ensureLoudnessAnalyzed(current)
-            }
-        }
     }
 
     // ── Internal ──────────────────────────────────────────────────────────────
@@ -1939,6 +2088,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     _isPlaying.value       = false
                     _currentPosition.value = 0
                     stopProgressTracking()
+                    abandonAudioFocus()
                     pushNotificationState(forceMetadata = true)
                 }
             }
@@ -1971,21 +2121,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun stopProgressTracking() { progressJob?.cancel(); progressJob = null }
 
     private fun stopPlayback() {
-        // Любой ещё не завершившийся prepare становится устаревшим; его callback
-        // не сможет запустить аудио после явной остановки пользователя.
-        playbackGeneration++
         flushStatsIfNeeded()
         stopProgressTracking()           // ← сначала останавливаем корутину,
-        val pending = pendingPlayer
-        pendingPlayer = null
-        try { pending?.setOnPreparedListener(null) } catch (_: Exception) {}
-        try { pending?.setOnErrorListener(null) } catch (_: Exception) {}
-        try { pending?.release() } catch (_: Exception) {}
-        val player = mediaPlayer ?: preparingPreviousPlayer
-        preparingPreviousPlayer = null
+        val player = mediaPlayer         //   чтобы она не обратилась к уже
         mediaPlayer = null               //   освобождённому MediaPlayer
         _isPlaying.value = false
         _currentPosition.value = 0
+        abandonAudioFocus()
         // Уведомляем DualEngine ПЕРЕД release(), пока объект ещё технически жив,
         // но ПОСЛЕ того как обнулили mediaPlayer — чтобы cancelNext() не пытался
         // вызывать setVolume() на уже мёртвом плеере в следующем startPlayback()
@@ -2164,6 +2306,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val previousTrackHistory = mutableListOf<Long>()
     private companion object {
         const val MAX_PREVIOUS_TRACKS = 100
+        /** Громкость при «утином» приглушении (короткие звуки поверх музыки). */
+        const val DUCK_VOLUME = 0.25f
+        /** Сколько времени «глотатель» внешнего плея остаётся заряженным. */
+        const val SWALLOW_TTL_MS = 30_000L
     }
 
     /** Генерирует следующий случайный индекс с учетом истории */
