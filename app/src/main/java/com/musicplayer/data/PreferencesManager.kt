@@ -75,7 +75,6 @@ class PreferencesManager(context: Context) {
             putBoolean("shuffle",            settings.shuffleEnabled)
             putString("repeat_mode",         settings.repeatMode.name)
             putInt("crossfade_duration",     settings.crossfadeDuration)
-            putBoolean("bass_boost",         settings.bassBoostEnabled)
             putBoolean("equalizer",          settings.equalizerEnabled)
             putBoolean("show_album_art",     settings.showAlbumArt)
             putString("theme",               settings.theme.name)
@@ -92,7 +91,6 @@ class PreferencesManager(context: Context) {
             putBoolean("use_wavy_seekbar",   settings.useWavySeekBar)
             putBoolean("colored_player_buttons", settings.coloredPlayerButtons)
             putBoolean("colored_queue_panel", settings.coloredQueuePanel)
-            putBoolean("loudness_normalization", settings.loudnessNormalizationEnabled)
             // Типографика
             putFloat("player_title_size",     settings.playerTitleSize)
             putFloat("player_artist_size",    settings.playerArtistSize)
@@ -195,7 +193,6 @@ class PreferencesManager(context: Context) {
             shuffleEnabled   = prefs.getBoolean("shuffle",         false),
             repeatMode       = safeEnum(prefs.getString("repeat_mode", null), RepeatMode.NONE),
             crossfadeDuration= prefs.getInt("crossfade_duration",  0),
-            bassBoostEnabled = prefs.getBoolean("bass_boost",       false),
             equalizerEnabled = prefs.getBoolean("equalizer",        false),
             showAlbumArt     = prefs.getBoolean("show_album_art",   true),
             theme            = safeEnum(prefs.getString("theme", null), AppTheme.BLOOMEE),
@@ -211,7 +208,6 @@ class PreferencesManager(context: Context) {
             useWavySeekBar    = prefs.getBoolean("use_wavy_seekbar", true),
             coloredPlayerButtons = prefs.getBoolean("colored_player_buttons", true),
             coloredQueuePanel = prefs.getBoolean("colored_queue_panel", true),
-            loudnessNormalizationEnabled = prefs.getBoolean("loudness_normalization", true),
             // Типографика
             playerTitleSize     = prefs.getFloat("player_title_size",     22f),
             playerArtistSize    = prefs.getFloat("player_artist_size",    15f),

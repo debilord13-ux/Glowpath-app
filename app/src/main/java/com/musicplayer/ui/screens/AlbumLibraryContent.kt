@@ -184,7 +184,9 @@ private fun SharedTransitionScope.AlbumOverview(
             LazyVerticalGrid(
                 columns = if (listMode) GridCells.Fixed(1) else GridCells.Adaptive(152.dp),
                 state = gridState,
-                modifier = Modifier.widthIn(max = 1000.dp).fillMaxSize().testTag("album_grid"),
+                // Во всю ширину экрана: раньше на широких устройствах края сетки были
+                // «мёртвыми зонами» — свайпы и тапы там не работали.
+                modifier = Modifier.fillMaxSize().testTag("album_grid"),
                 contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp,
                     bottom = bottomSpace + if (tab == 1) 100.dp else 20.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),

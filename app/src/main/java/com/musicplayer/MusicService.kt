@@ -50,6 +50,10 @@ class MusicService : Service() {
 
     // Callbacks injected by ViewModel
     var onPlayPause: (() -> Unit)? = null
+    /** Семантическое «играть» (медиа-кнопки, шторка TG) — НЕ тоггл. */
+    var onPlayCommand: (() -> Unit)? = null
+    /** Семантическая «пауза»: глушит только если реально играем. */
+    var onPauseCommand: (() -> Unit)? = null
     var onPrev:      (() -> Unit)? = null
     var onNext:      (() -> Unit)? = null
     var onStop:      (() -> Unit)? = null
@@ -125,8 +129,12 @@ class MusicService : Service() {
             )
             setSessionActivity(makeActivityIntent())
             setCallback(object : MediaSessionCompat.Callback() {
-                override fun onPlay()         { onPlayPause?.invoke() }
-                override fun onPause()        { onPlayPause?.invoke() }
+                // ВАЖНО: onPlay/onPause — семантические команды, а не тоггл. Когда
+                // Telegram ставит нас на паузу перед гс, а мы уже молчали, тоггл
+                // самовольно ВКЛЮЧАЛ музыку. Теперь: пауза глушит играющего,
+                // «плей» будит только спящего (см. externalPlay/PauseCommand).
+                override fun onPlay()         { (onPlayCommand ?: onPlayPause)?.invoke() }
+                override fun onPause()        { (onPauseCommand ?: onPlayPause)?.invoke() }
                 override fun onSkipToNext()   { onNext?.invoke() }
                 override fun onSkipToPrevious() { onPrev?.invoke() }
                 override fun onSeekTo(pos: Long) { onSeekTo?.invoke(pos) }

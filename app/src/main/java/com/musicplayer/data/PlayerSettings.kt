@@ -67,7 +67,6 @@ data class PlayerSettings(
     val shuffleEnabled: Boolean   = false,
     val repeatMode: RepeatMode    = RepeatMode.NONE,
     val crossfadeDuration: Int    = 0,
-    val bassBoostEnabled: Boolean = false,
     val equalizerEnabled: Boolean = false,
     val showAlbumArt: Boolean     = true,
     val theme: AppTheme           = AppTheme.BLOOMEE,
@@ -84,7 +83,6 @@ data class PlayerSettings(
     val useWavySeekBar: Boolean   = true,
     val coloredPlayerButtons: Boolean = true, // красить кнопки плеера под цвета обложки
     val coloredQueuePanel: Boolean    = true, // красить панель очереди в другой оттенок обложки
-    val loudnessNormalizationEnabled: Boolean = true, // выравнивать громкость треков (−14 LUFS)
 
     // ── Типографика ───────────────────────────────────────────────────────────
     val playerTitleSize: Float    = 22f,     // размер заголовка трека в плеере (sp)
