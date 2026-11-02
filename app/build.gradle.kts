@@ -12,8 +12,8 @@ android {
         applicationId = "com.musicplayer"
         minSdk = 26 // Как ты просил изначально
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0-http"
+        versionCode = 9
+        versionName = "1.1-transitions"
 
         // Embed the identity of this APK, not the latest build available online.
         val revision = providers.environmentVariable("GITHUB_SHA").orNull.orEmpty()
@@ -26,19 +26,30 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // ── Стабильная подпись: ОДИН ключ на ВСЕ сборки ──────────────────────────
+    // Ключ лежит в репозитории (signing/glowpath.keystore) и используется всегда —
+    // и в CI, и локально, и для debug, и для release. Разные ключи у «обновлений»
+    // были причиной ошибки «приложение конфликтует с другим пакетом»: Android
+    // считает APK с другой подписью чужим и отказывается ставить его поверх.
+    // Пароли указаны рядом с ключом сознательно: проект личный, а предсказуемая
+    // подпись важнее секретности (см. signing/README.txt).
     val stableKeystorePath = System.getenv("GLOWPATH_KEYSTORE_PATH").orEmpty()
+        .ifBlank { "signing/glowpath.keystore" }
     val stableKeystorePassword = System.getenv("GLOWPATH_KEYSTORE_PASSWORD").orEmpty()
+        .ifBlank { "glowpath-stable-key" }
     val stableKeyAlias = System.getenv("GLOWPATH_KEY_ALIAS").orEmpty()
+        .ifBlank { "glowpath-release" }
     val stableKeyPassword = System.getenv("GLOWPATH_KEY_PASSWORD").orEmpty()
+        .ifBlank { stableKeystorePassword }
 
     signingConfigs {
-        if (stableKeystorePath.isNotBlank()) {
-            create("glowpathStable") {
-                storeFile = file(stableKeystorePath)
-                storePassword = stableKeystorePassword
-                keyAlias = stableKeyAlias
-                keyPassword = stableKeyPassword
-            }
+        create("glowpathStable") {
+            // rootProject.file: ключ лежит в КОРНЕ репозитория, а file() резолвится
+            // относительно каталога модуля app/ — без rootProject сборка не найдёт ключ.
+            storeFile = rootProject.file(stableKeystorePath)
+            storePassword = stableKeystorePassword
+            keyAlias = stableKeyAlias
+            keyPassword = stableKeyPassword
         }
     }
 
@@ -72,16 +83,15 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Подписываем тем же ключом, что и debug — APK ставится поверх без удаления данных
-            if (stableKeystorePath.isNotBlank()) {
-                signingConfig = signingConfigs.getByName("glowpathStable")
-            }
+            // Подписываем СТАБИЛЬНЫМ ключом из репозитория — APK ставится поверх
+            // предыдущей версии без удаления данных и без конфликта пакетов.
+            signingConfig = signingConfigs.getByName("glowpathStable")
         }
         debug {
             isMinifyEnabled = false
-            if (stableKeystorePath.isNotBlank()) {
-                signingConfig = signingConfigs.getByName("glowpathStable")
-            }
+            // Debug тоже стабильным ключом: иначе debug-сборка с CI (одноразовый
+            // debug-ключ раннера) конфликтовала с любой ранее установленной.
+            signingConfig = signingConfigs.getByName("glowpathStable")
         }
     }
 }
