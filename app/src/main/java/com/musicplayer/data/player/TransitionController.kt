@@ -120,6 +120,15 @@ class TransitionController(private val engine: DualPlayerEngine) {
         engine.cancelNext()
     }
 
+    /**
+     * Гасит только таймер планировщика, не трогая предзагруженный плеер.
+     * Нужен при ручном переходе на уже подготовленный трек: engine.cancelNext()
+     * здесь убил бы playerB, который в этот момент становится мастером.
+     */
+    fun cancelSchedulerOnly() {
+        cancelScheduler()
+    }
+
     private fun cancelScheduler() {
         schedulerJob?.cancel()
         schedulerJob = null

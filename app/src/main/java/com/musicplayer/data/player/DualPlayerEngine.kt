@@ -46,35 +46,29 @@ class DualPlayerEngine(private val context: Context) {
     private var playbackSpeed: Float = 1f
     private var nextPrepared: Boolean = false
 
-    // Гейны нормализации громкости (множители ≤ 1) для мастера и предзагруженного
-    // следующего трека. Без них кроссфейд из громкого трека в тихий звучит громче,
-    // чем сам тихий трек после перехода — сумма двух несинхронных источников
-    // всегда выше по мощности, чем одиночный сигнал.
-    private var masterLoudnessGain: Float = 1f
-    private var nextLoudnessGain: Float = 1f
+    /** Приглушение аудиофокусом (гс/уведомления) — общий множитель на оба плеера,
+     *  чтобы duck работал и во время кроссфейда. */
+    private var duckFactor: Float = 1f
+
+    /** URI трека, заряженного в playerB — по нему ручной «Следующий» понимает,
+     *  что переход можно сделать мгновенно, без пересоздания плеера. */
+    var lastPreparedUri: Uri? = null
+        private set
 
     var onPlayerSwapped: ((masterPlayer: MediaPlayer) -> Unit)? = null
 
-    fun setMasterPlayer(player: MediaPlayer) {
+    /**
+     * @param initialEnvelope стартовая громкость мастера 0..1: при кроссфейде
+     *        ручного переключения новый плеер должен стартовать с нуля,
+     *        а не с полной громкости (иначе сумма двух плееров «выпрыгивает»). */
+    fun setMasterPlayer(player: MediaPlayer, initialEnvelope: Float = 1f) {
         releaseQuiet(playerA)
         releaseQuiet(playerB)
         playerB = null
         nextPrepared = false
+        lastPreparedUri = null
         playerA = player
-        applyVolume(player, 1f)
-    }
-
-    /** Коэффициент громкости (0..1) для текущего (мастер) плеера. */
-    fun setMasterLoudnessGain(gain: Float) {
-        masterLoudnessGain = gain.coerceIn(0f, 1f)
-        if (!transitionRunning) {
-            playerA?.let { applyVolume(it, 1f) }
-        }
-    }
-
-    /** Коэффициент громкости (0..1) для предзагруженного следующего трека. */
-    fun setNextLoudnessGain(gain: Float) {
-        nextLoudnessGain = gain.coerceIn(0f, 1f)
+        applyVolume(player, initialEnvelope.coerceIn(0f, 1f))
     }
 
     fun setUserVolume(volume: Float) {
@@ -84,6 +78,14 @@ class DualPlayerEngine(private val context: Context) {
     fun setUserVolume(left: Float, right: Float) {
         userVolumeL = left.coerceIn(0f, 1f)
         userVolumeR = right.coerceIn(0f, 1f)
+        if (!transitionRunning) {
+            playerA?.let { applyVolume(it, 1f) }
+        }
+    }
+
+    /** Общий множитель приглушения (0..1), действует на оба плеера мгновенно. */
+    fun setDuckFactor(factor: Float) {
+        duckFactor = factor.coerceIn(0f, 1f)
         if (!transitionRunning) {
             playerA?.let { applyVolume(it, 1f) }
         }
@@ -115,6 +117,7 @@ class DualPlayerEngine(private val context: Context) {
         try {
             releaseQuiet(playerB)
             nextPrepared = false
+            lastPreparedUri = null
             val player = MediaPlayer()
             configurePlayer(player)
             player.setVolume(0f, 0f)
@@ -139,6 +142,7 @@ class DualPlayerEngine(private val context: Context) {
             }
             player.setDataSource(context, uri)
             playerB = player
+            lastPreparedUri = uri
             player.prepareAsync()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -160,6 +164,7 @@ class DualPlayerEngine(private val context: Context) {
         transitionJob?.cancel()
         transitionRunning = false
         nextPrepared = false
+        lastPreparedUri = null
         releaseQuiet(playerB)
         playerB = null
         playerA?.let { applyVolume(it, 1f) }
@@ -172,6 +177,7 @@ class DualPlayerEngine(private val context: Context) {
         playerA = null
         releaseQuiet(playerB)
         playerB = null
+        lastPreparedUri = null
     }
 
     fun performTransition(
@@ -225,13 +231,13 @@ class DualPlayerEngine(private val context: Context) {
             // Gapless cut: следующий уже играет, старый глушим сразу.
             playerA = nextPlayer
             playerB = outgoing
-            swapLoudnessGains()
             applyVolume(nextPlayer, 1f)
             onPlayerSwapped?.invoke(nextPlayer)
             onSwapReady?.invoke()
             releaseQuiet(outgoing)
             playerB = null
             nextPrepared = false
+            lastPreparedUri = null
             onComplete()
             return
         }
@@ -240,7 +246,6 @@ class DualPlayerEngine(private val context: Context) {
 
         playerA = nextPlayer
         playerB = outgoing
-        swapLoudnessGains()
         onPlayerSwapped?.invoke(nextPlayer)
         onSwapReady?.invoke()
 
@@ -272,6 +277,7 @@ class DualPlayerEngine(private val context: Context) {
         releaseQuiet(outgoing)
         playerB = null
         nextPrepared = false
+        lastPreparedUri = null
         onComplete()
     }
 
@@ -283,6 +289,7 @@ class DualPlayerEngine(private val context: Context) {
         playerA = null
         playerB = null
         nextPrepared = false
+        lastPreparedUri = null
     }
 
     private fun configurePlayer(player: MediaPlayer) {
@@ -298,17 +305,13 @@ class DualPlayerEngine(private val context: Context) {
 
     private fun applyVolume(player: MediaPlayer?, envelope: Float) {
         if (player == null) return
-        val gain = if (player === playerB) nextLoudnessGain else masterLoudnessGain
-        val left = (userVolumeL * gain * envelope).coerceIn(0f, 1f)
-        val right = (userVolumeR * gain * envelope).coerceIn(0f, 1f)
-        player.setVolume(left, right)
-    }
-
-    /** После смены мастеров гейны тоже меняются местами (вместе с треками). */
-    private fun swapLoudnessGains() {
-        val tmp = masterLoudnessGain
-        masterLoudnessGain = nextLoudnessGain
-        nextLoudnessGain = tmp
+        // try/catch: плеер могли освободить из другой ветки (ошибка/восстановление
+        // старого плеера) — setVolume на мёртвом плеере кидает IllegalStateException.
+        try {
+            val left = (userVolumeL * duckFactor * envelope).coerceIn(0f, 1f)
+            val right = (userVolumeR * duckFactor * envelope).coerceIn(0f, 1f)
+            player.setVolume(left, right)
+        } catch (_: Exception) {}
     }
 
     private fun applySpeed(player: MediaPlayer?) {
