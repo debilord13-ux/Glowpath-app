@@ -69,7 +69,10 @@ object TrackPreloader {
         val started = android.os.SystemClock.uptimeMillis()
         while (android.os.SystemClock.uptimeMillis() - started < timeoutMs) {
             if (uri.scheme != "content") return null
-            inFlight[cacheKey(uri)]?.let { job -> if (!job.isActive) break } ?: break
+            // Без break внутри лямбды let: break в инлайн-лямбдах в Kotlin 2.0 —
+            // экспериментальная фича, компилятор её отвергает без доп. флагов.
+            val job = inFlight[cacheKey(uri)]
+            if (job == null || !job.isActive) break
             delay(AWAIT_POLL_MS)
             readyCachedFile(context, uri)?.let { return it }
         }
