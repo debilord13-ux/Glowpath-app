@@ -5,6 +5,13 @@ on:
   push:
     branches: [ main ]
 
+# Новый пуш в ветку отменяет ещё идущую сборку той же ветки. Это исключает
+# параллельные прогоны, которые зря жгут минуты и усиливают лимитирование
+# со стороны Maven Central.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -26,17 +33,30 @@ jobs:
         with:
           packages: platform-tools
 
+      # Кэш ~/.gradle между запусками: зависимости и дистрибутив Gradle
+      # скачиваются один раз, после чего Maven Central не запрашивается вовсе.
+      # Раньше каждый прогон качал сотни артефактов заново и периодически
+      # получал HTTP 429 (Too Many Requests) от Maven Central.
+      - name: Set up Gradle (dependency caching)
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          dependency-graph: disabled
+
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      # ci/gradle-retry.sh повторяет задачу до 3 раз, но только при сетевых
+      # сбоях (HTTP 429/5xx, таймауты) — ошибки компиляции и тестов он
+      # не маскирует и завершает шаг сразу.
       - name: Test player and library interactions
-        run: ./gradlew testDebugUnitTest --stacktrace
+        run: bash ci/gradle-retry.sh testDebugUnitTest
 
       # Ключ подписи лежит в репозитории (signing/glowpath.keystore) и один и тот же
       # для всех сборок — поэтому обновление APK ставится поверх предыдущей версии
       # без ошибки «приложение конфликтует с другим пакетом». Секреты больше не нужны.
       - name: Build signed Release APK
-        run: ./gradlew assembleRelease --stacktrace
+        run: bash ci/gradle-retry.sh assembleRelease
 
       - name: Upload Release APK
         uses: actions/upload-artifact@v4
