@@ -16,6 +16,7 @@ fun AlbumsScreen(
     val currentSong by viewModel.currentSong.collectAsState()
     val isPlaying by viewModel.isPlaying.collectAsState()
     val customArtMap by viewModel.customArtMap.collectAsState()
+    val listenedBySong by viewModel.listenedBySong.collectAsState()
     val deviceAlbums = remember(songs, customArtMap) { buildDeviceAlbums(songs, customArtMap) }
     val playlists = remember(userAlbums, songs, customArtMap) { buildUserPlaylists(userAlbums, songs, customArtMap) }
     var openAlbumKey by rememberSaveable { mutableStateOf<String?>(null) }
@@ -24,7 +25,7 @@ fun AlbumsScreen(
     var deleteAlbumId by rememberSaveable { mutableStateOf<String?>(null) }
 
     AlbumLibraryContent(
-        state = AlbumLibraryState(deviceAlbums, playlists, currentSong?.id, isPlaying),
+        state = AlbumLibraryState(deviceAlbums, playlists, currentSong?.id, isPlaying, listenedBySong),
         openAlbumKey = openAlbumKey,
         isActive = isActive,
         actions = AlbumLibraryActions(

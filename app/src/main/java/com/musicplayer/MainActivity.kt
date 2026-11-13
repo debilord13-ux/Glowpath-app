@@ -528,6 +528,7 @@ fun MusicPlayerApp(
                     onBack             = { navController.popBackStack() },
                     onTransitionsClick = { navController.navigate("transitions") },
                     onAnimationsClick  = { navController.navigate("animations") },
+                    onSleepTimerClick  = { navController.navigate("sleep_timer") },
                     onStatsClick       = { navController.navigate("stats") },
                     onEqualizerClick   = { navController.navigate("equalizer") },
                     onTopBarClick      = { navController.navigate("topbar_settings") },
@@ -589,6 +590,10 @@ fun MusicPlayerApp(
 
             composable("animations", enterTransition = { AnimationsApplier.screenEnter(settings.screenTransitionAnim, settings.animParams) }, exitTransition = { AnimationsApplier.screenExit(settings.screenTransitionAnim, settings.animParams) }, popEnterTransition = { AnimationsApplier.screenPopEnter(settings.screenTransitionAnim, settings.animParams) }, popExitTransition = { AnimationsApplier.screenPopExit(settings.screenTransitionAnim, settings.animParams) }) {
                 AnimationSettingsScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
+            }
+
+            composable("sleep_timer", enterTransition = { AnimationsApplier.screenEnter(settings.screenTransitionAnim, settings.animParams) }, exitTransition = { AnimationsApplier.screenExit(settings.screenTransitionAnim, settings.animParams) }, popEnterTransition = { AnimationsApplier.screenPopEnter(settings.screenTransitionAnim, settings.animParams) }, popExitTransition = { AnimationsApplier.screenPopExit(settings.screenTransitionAnim, settings.animParams) }) {
+                SleepTimerScreen(viewModel = viewModel, onBack = { navController.popBackStack() })
             }
         }
 

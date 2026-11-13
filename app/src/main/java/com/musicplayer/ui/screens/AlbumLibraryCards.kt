@@ -249,6 +249,16 @@ internal fun SharedTransitionScope.AlbumDetailPage(
                         Text("${collectionTrackCount(album.songs.size)} · ${collectionDuration(album.duration)}",
                             style = MaterialTheme.typography.bodyMedium, fontFamily = font, color = colors.onSurfaceVariant,
                             textAlign = TextAlign.Center)
+                        val listenedMs = remember(album.songs, state.listenedBySong) {
+                            album.songs.sumOf { state.listenedBySong[it.id] ?: 0L }
+                        }
+                        if (listenedMs > 0L) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(collectionListenedLabel(listenedMs),
+                                style = MaterialTheme.typography.bodyMedium, fontFamily = font,
+                                color = colors.onSurfaceVariant.copy(alpha = 0.85f),
+                                textAlign = TextAlign.Center)
+                        }
                         album.playlist?.description?.takeIf { it.isNotBlank() }?.let {
                             Spacer(Modifier.height(12.dp))
                             Text(it, style = MaterialTheme.typography.bodyMedium, fontFamily = font,

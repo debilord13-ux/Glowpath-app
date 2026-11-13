@@ -22,6 +22,8 @@ internal data class AlbumLibraryState(
     val playlists: List<LibraryAlbum> = emptyList(),
     val currentSongId: Long? = null,
     val isPlaying: Boolean = false,
+    /** Время прослушивания по каждой песне (мс) — для строки «прослушано». */
+    val listenedBySong: Map<Long, Long> = emptyMap(),
 )
 
 internal data class AlbumLibraryActions(
@@ -93,4 +95,13 @@ internal fun collectionTrackCount(count: Int): String = "$count " + when {
 internal fun collectionDuration(duration: Long): String {
     val minutes = duration.coerceAtLeast(0L) / 60_000L
     return if (minutes >= 60) "${minutes / 60} ч ${minutes % 60} мин" else "$minutes мин"
+}
+
+/** «h:mm:ss прослушано» — суммарное время прослушивания коллекции. */
+internal fun collectionListenedLabel(listenedMs: Long): String {
+    val totalSeconds = listenedMs.coerceAtLeast(0L) / 1000L
+    val hours = totalSeconds / 3600L
+    val minutes = (totalSeconds % 3600L) / 60L
+    val seconds = totalSeconds % 60L
+    return String.format(java.util.Locale.US, "%d:%02d:%02d прослушано", hours, minutes, seconds)
 }

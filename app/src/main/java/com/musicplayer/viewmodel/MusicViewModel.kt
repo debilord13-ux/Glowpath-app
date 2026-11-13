@@ -30,6 +30,7 @@ import com.musicplayer.data.lyrics.LyricsRepository
 import com.musicplayer.data.lyrics.LyricsState
 import com.musicplayer.data.lyrics.SyncedLine
 import com.musicplayer.data.player.DualPlayerEngine
+import com.musicplayer.data.player.TrackPreloader
 import com.musicplayer.data.player.TransitionController
 import com.musicplayer.data.stats.PlaybackStatsRepository
 import com.musicplayer.repository.MusicRepository
@@ -267,6 +268,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     /** Equalizer Android effect (null if device doesn't support it) */
     private var androidEqualizer: android.media.audiofx.Equalizer? = null
     private var androidVirtualizer: android.media.audiofx.Virtualizer? = null
+    /** Сессия, к которой привязаны эффекты. Все плееры (мастер и переходный)
+     *  работают в одной сессии — эффекты не пересоздаются посреди кроссфейда
+     *  и действуют на оба трека одновременно. */
+    private var eqSessionId: Int = -1
 
     fun updateEqGains(gains: List<Float>) {
         _eqGains.value = gains
@@ -337,6 +342,15 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun attachEqualizerToSession(sessionId: Int) {
+        // Эффекты уже висят на этой сессии — просто переприменяем уровни:
+        // пересоздание посреди кроссфейда звучало бы как «сброс на базовые настройки».
+        if (androidEqualizer != null && eqSessionId == sessionId) {
+            applyEqToPlayer()
+            try { androidEqualizer?.enabled = _eqEnabled.value } catch (_: Exception) {}
+            try { androidVirtualizer?.enabled = _spatialAudio.value } catch (_: Exception) {}
+            return
+        }
+
         // Release old instances
         androidEqualizer?.release()
         androidVirtualizer?.release()
@@ -356,6 +370,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             }
         } catch (_: Exception) {}
 
+        eqSessionId = sessionId
     }
 
     private val _bridgeQueueUris = MutableStateFlow<List<String>>(emptyList())
@@ -372,7 +387,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // Движок кроссфейда (два MediaPlayer) + контроллер расписания переходов.
     // Адаптировано из DualPlayerEngine / TransitionController (PixelPlay).
     private val dualEngine         = DualPlayerEngine(application)
-    private val transitionCtrl     = TransitionController(dualEngine)
+    private val transitionCtrl     = TransitionController(application, dualEngine)
 
     private val _transitionSettings = MutableStateFlow(prefs.loadTransitionSettings())
     val transitionSettings: StateFlow<TransitionSettings> = _transitionSettings.asStateFlow()
@@ -380,6 +395,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // ── Playback stats tracking ───────────────────────────────────────────────
     private var trackingStartMs: Long = 0L
     private var trackingSongId: Long  = -1L
+
+    /** Суммарное время прослушивания по каждой песне (мс) — для строк
+     *  «прослушано» на страницах альбомов/плейлистов. */
+    private val _listenedBySong = MutableStateFlow<Map<Long, Long>>(emptyMap())
+    val listenedBySong: StateFlow<Map<Long, Long>> = _listenedBySong.asStateFlow()
+
+    private fun refreshListenedStats() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _listenedBySong.value = statsRepository.listenedMsBySong()
+        }
+    }
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
@@ -405,6 +431,8 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val intent = Intent(application, MusicService::class.java)
         application.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
         application.startService(intent)
+
+        refreshListenedStats()
 
         // Load songs in background — use fast file storage when available,
         // fall back to legacy SharedPreferences on first run (migration)
@@ -1115,6 +1143,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         // исчезала на всё время подготовки.)
         stopProgressTracking()
         val oldPlayer = mediaPlayer
+        val previousSong = _currentSong.value
+        // Метаданные переключаем сразу: экран плеера и мини-плеер открываются
+        // с информацией о новом треке уже во время его подготовки. Если ждать
+        // onPrepared, первый тап показывал пустой плеер, который сразу закрывался.
+        _currentSong.value = song
         // Старый плеер доживает до готовности нового — снимаем с него completion,
         // чтобы его конец посреди переключения не запускал playNext().
         try { oldPlayer?.setOnCompletionListener(null) } catch (_: Exception) {}
@@ -1134,7 +1167,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
-                setDataSource(getApplication(), song.uri)
+                // Тот же audio session, что у предыдущего плеера: эквалайзер
+                // продолжает работать и во время ручного кроссфейда.
+                val masterSessionId = try {
+                    oldPlayer?.audioSessionId?.takeIf { it > 0 }
+                } catch (_: Exception) { null }
+                masterSessionId?.let { sessionId ->
+                    try { setAudioSessionId(sessionId) } catch (_: Exception) {}
+                }
+                val cachedSource = TrackPreloader.readyCachedFile(getApplication(), song.uri)
+                setDataSource(getApplication(), cachedSource ?: song.uri)
                 isLooping = (_settings.value.repeatMode == RepeatMode.ONE)
             }
             player.setOnErrorListener { mp, what, extra ->
@@ -1144,6 +1186,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 try { mp.release() } catch (_: Exception) {}
                 if (oldPlayer != null) {
                     mediaPlayer = oldPlayer
+                    _currentSong.value = previousSong
                     _isPlaying.value = try { oldPlayer.isPlaying } catch (_: Exception) { false }
                     // Возвращаем completion, снятый в начале переключения: без него
                     // восстановленный трек не перейдёт к следующему.
@@ -1242,6 +1285,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 playerRef?.release()
             }
             mediaPlayer = oldPlayer
+            _currentSong.value = previousSong
             if (oldPlayer != null) {
                 _isPlaying.value = try { oldPlayer.isPlaying } catch (_: Exception) { false }
                 try {
@@ -1511,6 +1555,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (toRecord >= 10_000L) {
             viewModelScope.launch(Dispatchers.IO) {
                 statsRepository.recordPlayback(songId, toRecord)
+                // Инкрементально обновляем карту «прослушано», чтобы строки
+                // на страницах коллекций обновлялись без перечитывания файла.
+                _listenedBySong.value = _listenedBySong.value.toMutableMap().apply {
+                    merge(songId, toRecord, Long::plus)
+                }
             }
         }
         trackingStartMs = 0L

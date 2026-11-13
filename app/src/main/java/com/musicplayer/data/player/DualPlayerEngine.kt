@@ -46,6 +46,11 @@ class DualPlayerEngine(private val context: Context) {
     private var playbackSpeed: Float = 1f
     private var nextPrepared: Boolean = false
 
+    companion object {
+        /** Сколько ждать докачки кэша перед подготовкой B по исходному URI. */
+        private const val PRELOAD_AWAIT_MS = 3_500L
+    }
+
     /** Приглушение аудиофокусом (гс/уведомления) — общий множитель на оба плеера,
      *  чтобы duck работал и во время кроссфейда. */
     private var duckFactor: Float = 1f
@@ -113,13 +118,21 @@ class DualPlayerEngine(private val context: Context) {
         }
     }
 
-    fun prepareNext(uri: Uri, startPositionMs: Long = 0L) {
+    suspend fun prepareNext(uri: Uri, startPositionMs: Long = 0L) {
         try {
             releaseQuiet(playerB)
             nextPrepared = false
             lastPreparedUri = null
             val player = MediaPlayer()
             configurePlayer(player)
+            // Общий audio session с мастером: эквалайзер и виртуализатор
+            // действуют на оба плеера с первой же миллисекунды кроссфейда.
+            val masterSessionId = try {
+                playerA?.audioSessionId?.takeIf { it > 0 }
+            } catch (_: Exception) { null }
+            masterSessionId?.let { sessionId ->
+                try { player.setAudioSessionId(sessionId) } catch (_: Exception) {}
+            }
             player.setVolume(0f, 0f)
             player.setOnPreparedListener {
                 try {
@@ -140,7 +153,11 @@ class DualPlayerEngine(private val context: Context) {
                 releaseQuiet(mp)
                 true
             }
-            player.setDataSource(context, uri)
+            // Если трек успели докачать в кэш — готовимся по локальному файлу,
+            // без задержек медленного content-провайдера. Идентификатор для
+            // ручного перехода остаётся исходный URI.
+            val playbackSource = TrackPreloader.readyOrAwait(context, uri, PRELOAD_AWAIT_MS) ?: uri
+            player.setDataSource(context, playbackSource)
             playerB = player
             lastPreparedUri = uri
             player.prepareAsync()

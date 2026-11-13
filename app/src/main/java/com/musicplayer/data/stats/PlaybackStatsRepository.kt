@@ -137,6 +137,23 @@ class PlaybackStatsRepository(context: Context) {
 
     // ── Read / Summarize ──────────────────────────────────────────────────────
 
+    /**
+     * Суммарное время прослушивания по каждой песне за всю историю.
+     * Используется для строк «прослушано» на страницах коллекций.
+     */
+    fun listenedMsBySong(): Map<Long, Long> {
+        val events = readEvents()
+        if (events.isEmpty()) return emptyMap()
+        val cutoff = System.currentTimeMillis() - MAX_HISTORY_AGE_MS
+        val builder = mutableMapOf<Long, Long>()
+        for (event in events) {
+            if (event.endTimestamp < cutoff) continue
+            if (event.durationMs <= 0) continue
+            builder.merge(event.songId, event.durationMs, Long::plus)
+        }
+        return builder
+    }
+
     fun loadSummary(
         range: StatsTimeRange,
         songs: List<Song>,

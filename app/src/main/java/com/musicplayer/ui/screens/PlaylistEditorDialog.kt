@@ -47,6 +47,7 @@ import androidx.compose.material.icons.rounded.SortByAlpha
 import androidx.compose.material.icons.rounded.StarBorder
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -477,7 +478,8 @@ fun PlaylistEditorDialog(
                                     item {
                                         EditorActionChip(
                                             Icons.Rounded.SortByAlpha,
-                                            if (sortMode == EditorSortMode.TITLE) "A-Z ✓" else "A-Z"
+                                            "A-Z",
+                                            selected = sortMode == EditorSortMode.TITLE
                                         ) {
                                             sortMode = EditorSortMode.TITLE
                                             reorderSelection(EditorSortMode.TITLE)
@@ -486,7 +488,8 @@ fun PlaylistEditorDialog(
                                     item {
                                         EditorActionChip(
                                             Icons.Rounded.MoreTime,
-                                            if (sortMode == EditorSortMode.RECENT) "Недавние ✓" else "Недавние"
+                                            "Недавние",
+                                            selected = sortMode == EditorSortMode.RECENT
                                         ) {
                                             sortMode = EditorSortMode.RECENT
                                             reorderSelection(EditorSortMode.RECENT)
@@ -495,7 +498,8 @@ fun PlaylistEditorDialog(
                                     item {
                                         EditorActionChip(
                                             Icons.Rounded.Tune,
-                                            if (sortMode == EditorSortMode.ARTIST) "По артисту ✓" else "По артисту"
+                                            "По артисту",
+                                            selected = sortMode == EditorSortMode.ARTIST
                                         ) {
                                             sortMode = EditorSortMode.ARTIST
                                             reorderSelection(EditorSortMode.ARTIST)
@@ -504,7 +508,8 @@ fun PlaylistEditorDialog(
                                     item {
                                         EditorActionChip(
                                             if (showSelectedOnly) Icons.Rounded.LibraryMusic else Icons.Rounded.StarBorder,
-                                            if (showSelectedOnly) "Показать всё" else "Только выбранные"
+                                            if (showSelectedOnly) "Показать всё" else "Только выбранные",
+                                            selected = showSelectedOnly
                                         ) {
                                             showSelectedOnly = !showSelectedOnly
                                         }
@@ -711,17 +716,23 @@ private fun EditorStatChip(label: String) {
 private fun EditorActionChip(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
+    selected: Boolean = false,
     onClick: () -> Unit
 ) {
     val font = LocalAppFontFamily.current
+    val colors = MaterialTheme.colorScheme
     FilledTonalButton(
         onClick = onClick,
         shape = RoundedCornerShape(18.dp),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+        colors = ButtonDefaults.filledTonalButtonColors(
+            containerColor = if (selected) colors.primary else colors.secondaryContainer,
+            contentColor = if (selected) colors.onPrimary else colors.onSecondaryContainer
+        )
     ) {
         Icon(icon, contentDescription = null, modifier = Modifier.size(16.dp))
         Spacer(Modifier.width(6.dp))
-        Text(label, fontFamily = font, fontSize = 12.sp)
+        Text(label, fontFamily = font, fontSize = 12.sp, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
     }
 }
 

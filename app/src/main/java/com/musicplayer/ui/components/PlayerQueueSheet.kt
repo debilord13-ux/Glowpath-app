@@ -57,11 +57,13 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.QueueMusic
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.BottomSheetScaffold
 import androidx.compose.material3.DropdownMenu
@@ -72,6 +74,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetValue
+import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
@@ -126,13 +129,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.musicplayer.data.RepeatMode
 import com.musicplayer.data.Song
+import com.musicplayer.ui.screens.formatSleepTimerDuration
 import com.musicplayer.ui.theme.LocalAppFontFamily
 import com.musicplayer.viewmodel.MusicViewModel
+import com.musicplayer.viewmodel.SleepTimerAction
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 
 private val QueueTitleRowHeight = 48.dp
 private val QueueHandleHeight = 18.dp
+
+/** Что показывает нижняя панель плеера: список очереди или таймер сна. */
+private enum class PlayerQueuePanelMode { QUEUE, SLEEP_TIMER }
 
 // Дополнительный отступ сверху у раскрытой очереди СВЕРХ статус-бара.
 // В latentjam шторка останавливается ровно под статус-баром, поэтому 0.dp.
@@ -390,6 +398,7 @@ fun PlayerQueueHost(
     )
     val ink = queueAccentInk(vivid)
     val panelColor = rememberQueuePanelColor(gradientColors, colors.surfaceContainerHigh, settings.coloredQueuePanel)
+    var panelMode by remember { mutableStateOf(PlayerQueuePanelMode.QUEUE) }
 
     BackHandler(enabled = sheetState.bottomSheetState.currentValue == SheetValue.Expanded) {
         scope.launch { sheetState.bottomSheetState.partialExpand() }
@@ -461,6 +470,10 @@ fun PlayerQueueHost(
                         ink = ink,
                         panelColor = panelColor,
                         display = display,
+                        switcherEnabled = settings.queueSleepTimerSwitcher,
+                        panelMode = panelMode,
+                        onPanelModeChange = { panelMode = it },
+                        sleepTimerPanel = { SleepTimerQuickPanel(viewModel, vivid) },
                         onExpand = { scope.launch { sheetState.bottomSheetState.expand() } },
                         onTogglePlayback = { viewModel.togglePlayPause() },
                         onPlayAt = { index -> viewModel.playQueueItem(index) },
@@ -770,6 +783,10 @@ private fun PlayerQueueSheetContent(
     ink: Color,
     panelColor: Color,
     display: (Song) -> QueueDisplay,
+    switcherEnabled: Boolean,
+    panelMode: PlayerQueuePanelMode,
+    onPanelModeChange: (PlayerQueuePanelMode) -> Unit,
+    sleepTimerPanel: @Composable () -> Unit,
     onExpand: () -> Unit,
     onTogglePlayback: () -> Unit,
     onPlayAt: (Int) -> Unit,
@@ -816,25 +833,33 @@ private fun PlayerQueueSheetContent(
                 )
             }
             AnimatedContent(
-                targetState = queue.size,
+                targetState = if (switcherEnabled) panelMode else queue.size,
                 transitionSpec = { queueFadeThrough(reduceMotion) },
                 modifier = Modifier
-                    .align(Alignment.Center)
-                    .padding(horizontal = 56.dp),
-                label = "queue-count",
-            ) { count ->
-                Text(
-                    text = if (count == 0) "Очередь" else "Очередь · $count",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontFamily = font,
-                    color = colors.onSurface,
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
+                    .align(Alignment.Center),
+                label = "queue-title",
+            ) { target ->
+                if (switcherEnabled) {
+                    QueuePanelModeSwitcher(
+                        current = target as PlayerQueuePanelMode,
+                        vivid = vivid,
+                        onSelect = onPanelModeChange,
+                    )
+                } else {
+                    val count = target as Int
+                    Text(
+                        text = if (count == 0) "Очередь" else "Очередь · $count",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontFamily = font,
+                        color = colors.onSurface,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
             }
             AnimatedContent(
-                targetState = queue.isNotEmpty(),
+                targetState = queue.isNotEmpty() && panelMode == PlayerQueuePanelMode.QUEUE,
                 transitionSpec = { queueIconTransform(reduceMotion) },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
@@ -855,6 +880,9 @@ private fun PlayerQueueSheetContent(
                 }
             }
         }
+        if (switcherEnabled && panelMode == PlayerQueuePanelMode.SLEEP_TIMER) {
+            Box(Modifier.fillMaxWidth()) { sleepTimerPanel() }
+        } else {
         LazyColumn(
             modifier = Modifier.fadingListTop { listState.canScrollBackward },
             state = listState,
@@ -1004,6 +1032,165 @@ private fun PlayerQueueSheetContent(
                     }
                 }
             }
+        }
+        }
+    }
+}
+
+/** Компактный переключатель «Очередь / Таймер сна» в шапке нижней панели. */
+@Composable
+private fun QueuePanelModeSwitcher(
+    current: PlayerQueuePanelMode,
+    vivid: Color,
+    onSelect: (PlayerQueuePanelMode) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        QueuePanelModeTab(
+            label = "Очередь",
+            icon = Icons.Rounded.QueueMusic,
+            selected = current == PlayerQueuePanelMode.QUEUE,
+            vivid = vivid,
+            unselectedBg = colors.onSurface.copy(alpha = 0.06f),
+            onClick = { onSelect(PlayerQueuePanelMode.QUEUE) },
+        )
+        QueuePanelModeTab(
+            label = "Таймер",
+            icon = Icons.Rounded.Bedtime,
+            selected = current == PlayerQueuePanelMode.SLEEP_TIMER,
+            vivid = vivid,
+            unselectedBg = colors.onSurface.copy(alpha = 0.06f),
+            onClick = { onSelect(PlayerQueuePanelMode.SLEEP_TIMER) },
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QueuePanelModeTab(
+    label: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    vivid: Color,
+    unselectedBg: Color,
+    onClick: () -> Unit,
+) {
+    val ink = queueAccentInk(vivid)
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(14.dp),
+        color = if (selected) vivid else unselectedBg,
+        contentColor = if (selected) ink else MaterialTheme.colorScheme.onSurfaceVariant,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(14.dp))
+            Text(label, style = MaterialTheme.typography.labelMedium, fontFamily = LocalAppFontFamily.current)
+        }
+    }
+}
+
+/** Панель таймера сна внутри нижней панели плеера: статус + быстрые пресеты. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SleepTimerQuickPanel(
+    viewModel: MusicViewModel,
+    vivid: Color,
+) {
+    val state by viewModel.sleepTimerState.collectAsState()
+    val colors = MaterialTheme.colorScheme
+    val font = LocalAppFontFamily.current
+    val ink = queueAccentInk(vivid)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        if (state.isRunning) {
+            Text(
+                text = formatSleepTimerDuration(state.remainingSeconds),
+                style = MaterialTheme.typography.headlineMedium,
+                fontFamily = font,
+                fontWeight = FontWeight.Bold,
+                color = colors.onSurface,
+            )
+            Text(
+                text = buildString {
+                    if (state.stopAfterTrack && state.remainingSeconds <= 0) {
+                        append("Остановимся после текущего трека")
+                    } else {
+                        append(if (state.action == SleepTimerAction.PAUSE) "Действие: пауза" else "Действие: стоп")
+                        if (state.fadeOut) append(" · плавное затухание")
+                        if (state.stopAfterTrack) append(" · после текущего трека")
+                    }
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                fontFamily = font,
+                color = colors.onSurfaceVariant,
+            )
+            Surface(
+                onClick = { viewModel.cancelSleepTimer() },
+                shape = RoundedCornerShape(14.dp),
+                color = vivid.copy(alpha = 0.16f).compositeOver(colors.surfaceContainerHigh),
+                contentColor = ink,
+            ) {
+                Text(
+                    text = "Отменить таймер",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontFamily = font,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                )
+            }
+        } else {
+            Text(
+                text = "Таймер сна",
+                style = MaterialTheme.typography.titleMedium,
+                fontFamily = font,
+                fontWeight = FontWeight.SemiBold,
+                color = colors.onSurface,
+            )
+            Text(
+                text = "Музыка плавно затихнет и встанет на паузу через:",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = font,
+                color = colors.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(15, 30, 60, 90).forEach { minutes ->
+                    Surface(
+                        onClick = {
+                            viewModel.startSleepTimer(
+                                hours = 0,
+                                minutes = minutes,
+                                fadeOut = true,
+                                stopAfterTrack = false,
+                                action = SleepTimerAction.PAUSE,
+                            )
+                        },
+                        shape = RoundedCornerShape(14.dp),
+                        color = colors.onSurface.copy(alpha = 0.06f),
+                        contentColor = colors.onSurface,
+                    ) {
+                        Text(
+                            text = "$minutes мин",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontFamily = font,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                        )
+                    }
+                }
+            }
+            Text(
+                text = "Точные интервалы и действия — в Настройках → Таймер сна",
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = font,
+                color = colors.onSurfaceVariant,
+            )
         }
     }
 }

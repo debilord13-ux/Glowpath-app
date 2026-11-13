@@ -1,5 +1,6 @@
 package com.musicplayer.data.player
 
+import android.content.Context
 import com.musicplayer.data.Song
 import com.musicplayer.data.TransitionMode
 import com.musicplayer.data.TransitionSettings
@@ -20,7 +21,10 @@ import kotlinx.coroutines.launch
  * треки / перемотка к концу полностью глушили переход, из‑за чего слайдер
  * «длительность» выглядел мёртвым.
  */
-class TransitionController(private val engine: DualPlayerEngine) {
+class TransitionController(
+    private val context: Context,
+    private val engine: DualPlayerEngine
+) {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var schedulerJob: Job? = null
@@ -66,7 +70,9 @@ class TransitionController(private val engine: DualPlayerEngine) {
             }
 
             val transitionPoint = (duration - fadeDur).coerceAtLeast(0L)
-            val prebufferLead = 6_000L.coerceAtLeast(fadeDur + 1_500L)
+            // Упреждающий запас увеличен: за это время успевает докачаться кэш
+            // следующего трека и подготовиться плеер B — переход стартует без паузы.
+            val prebufferLead = 10_000L.coerceAtLeast(fadeDur + 1_500L)
             val prebufferPoint = (transitionPoint - prebufferLead).coerceAtLeast(0L)
 
             var prebuffered = false
@@ -75,6 +81,9 @@ class TransitionController(private val engine: DualPlayerEngine) {
                 val pos = getPositionMs().coerceAtLeast(0L)
 
                 if (!prebuffered && pos >= prebufferPoint) {
+                    // Кусочная докачка запускается первой: начало трека попадает в
+                    // кэш сразу, остальное дописывается фоном во время звучания.
+                    TrackPreloader.request(context, nextSong)
                     engine.prepareNext(nextSong.uri)
                     prebuffered = true
                 }
@@ -88,6 +97,7 @@ class TransitionController(private val engine: DualPlayerEngine) {
                                 return@launch
                             }
                         } else {
+                            TrackPreloader.request(context, nextSong)
                             engine.prepareNext(nextSong.uri)
                             val ready = engine.waitUntilNextPrepared()
                             if (!ready) {
