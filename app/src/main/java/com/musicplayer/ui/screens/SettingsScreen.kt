@@ -324,21 +324,6 @@ fun SettingsScreen(
                     }
                 )
                 SettingsGroupDivider()
-                SettingsSwitchItem(
-                    icon = Icons.Rounded.Timer,
-                    iconBg = MaterialTheme.colorScheme.tertiary,
-                    title = "Переключатель панели плеера",
-                    subtitle = if (settings.queueSleepTimerSwitcher) {
-                        "В панели очереди есть переключатель «Очередь / Таймер сна»"
-                    } else {
-                        "Панель очереди работает без переключателя"
-                    },
-                    checked = settings.queueSleepTimerSwitcher,
-                    onCheckedChange = {
-                        viewModel.updateSettings(settings.copy(queueSleepTimerSwitcher = it))
-                    }
-                )
-                SettingsGroupDivider()
                 SettingsNavigationItem(
                     icon = Icons.Rounded.Bedtime,
                     iconBg = MaterialTheme.colorScheme.primary,

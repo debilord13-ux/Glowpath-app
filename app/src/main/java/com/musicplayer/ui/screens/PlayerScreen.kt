@@ -266,13 +266,24 @@ fun PlayerScreen(
             val swipeProgress = 1f - expandedFraction
 
             if (isLandscape) {
-                LandscapePlayerContent(
-                    song!!, isPlaying, duration, settings, isFavourite, 1f,
-                    viewModel, customArtUri, previousCover, nextCover, requestClose,
-                    onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev,
-                    swipeProgress, expandedFraction, artworkModifier, lyricsModifier,
-                    songButtons
-                )
+                // Очередь и таймер сна доступны и в горизонтальном/планшетном
+                // режиме: та же нижняя панель с переключателем «Очередь / Таймер».
+                PlayerQueueHost(
+                    viewModel = viewModel,
+                    song = song!!,
+                    isPlaying = isPlaying,
+                    gradientColors = artworkGradientColors,
+                    onQueueTopChanged = { queueTop = it },
+                    onQueueExpandedChanged = { queueExpanded = it },
+                ) { _ ->
+                    LandscapePlayerContent(
+                        song!!, isPlaying, duration, settings, isFavourite, 1f,
+                        viewModel, customArtUri, previousCover, nextCover, requestClose,
+                        onLyricsClick, { showTrackSettings = true }, doFlipNext, doFlipPrev,
+                        swipeProgress, expandedFraction, artworkModifier, lyricsModifier,
+                        songButtons
+                    )
+                }
             } else {
                 PlayerQueueHost(
                     viewModel = viewModel,

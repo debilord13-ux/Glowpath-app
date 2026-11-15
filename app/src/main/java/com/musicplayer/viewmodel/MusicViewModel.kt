@@ -30,7 +30,6 @@ import com.musicplayer.data.lyrics.LyricsRepository
 import com.musicplayer.data.lyrics.LyricsState
 import com.musicplayer.data.lyrics.SyncedLine
 import com.musicplayer.data.player.DualPlayerEngine
-import com.musicplayer.data.player.TrackPreloader
 import com.musicplayer.data.player.TransitionController
 import com.musicplayer.data.stats.PlaybackStatsRepository
 import com.musicplayer.repository.MusicRepository
@@ -316,12 +315,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     /** Apply current volume + preamp + balance to the player. */
     private fun applyVolumeWithBalance() {
         val (left, right) = currentUserVolumePair()
-        // Во время ручного кроссфейда громкость мастера ведёт фейд-цикл: прямой
-        // setVolume здесь дал бы скачок к полной громкости посреди разгона.
-        // Новый уровень подхватит сам цикл на ближайшем тике (20 мс).
-        if (!dualEngine.isManualFadeRunning()) {
-            mediaPlayer?.setVolume(left.coerceIn(0f, 1f), right.coerceIn(0f, 1f))
-        }
+        mediaPlayer?.setVolume(left.coerceIn(0f, 1f), right.coerceIn(0f, 1f))
         dualEngine.setUserVolume(left, right)
     }
 
@@ -385,14 +379,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var mediaPlayer: MediaPlayer? = null
     private var progressJob: Job? = null
     private var musicService: MusicService? = null
-    /** Поколение запроса воспроизведения: устаревшие prepare-колбэки отбрасываются. */
-    private var playbackGeneration: Long = 0L
 
     // ── Transition Engine ────────────────────────────────────────────────────
     // Движок кроссфейда (два MediaPlayer) + контроллер расписания переходов.
     // Адаптировано из DualPlayerEngine / TransitionController (PixelPlay).
     private val dualEngine         = DualPlayerEngine(application)
-    private val transitionCtrl     = TransitionController(application, dualEngine)
+    private val transitionCtrl     = TransitionController(dualEngine)
 
     private val _transitionSettings = MutableStateFlow(prefs.loadTransitionSettings())
     val transitionSettings: StateFlow<TransitionSettings> = _transitionSettings.asStateFlow()
@@ -1131,39 +1123,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun startPlayback(song: Song, rememberHistory: Boolean = true) {
-        // Быстрый путь: движок уже предзагрузил ЭТОТ трек (планировщик кроссфейда
-        // делает это заранее, «во время музыки»). Тогда ручное переключение — из
-        // шторки, из сообщения, из UI — делает мгновенный переход без пересоздания
-        // плеера и без лага на старте.
-        if (tryEngineTransitionTo(song, rememberHistory)) return
-
         if (rememberHistory) rememberPreviousTrack(song)
         flushStatsIfNeeded()  // record previous song before switching
-        val generation = ++playbackGeneration
-
-        // ── Prepare-then-swap ─────────────────────────────────────────────
-        // Старый плеер НЕ убивается до готовности нового: пока новый готовится,
-        // старый продолжает играть — между треками больше нет секунды тишины.
-        // (Раньше: stopPlayback() → блокирующий prepare() → start() — и музыка
-        // исчезала на всё время подготовки.)
-        stopProgressTracking()
-        val oldPlayer = mediaPlayer
-        val previousSong = _currentSong.value
-        // Метаданные переключаем сразу: экран плеера и мини-плеер открываются
-        // с информацией о новом треке уже во время его подготовки. Если ждать
-        // onPrepared, первый тап показывал пустой плеер, который сразу закрывался.
-        _currentSong.value = song
-        // Старый плеер доживает до готовности нового — снимаем с него completion,
-        // чтобы его конец посреди переключения не запускал playNext().
-        try { oldPlayer?.setOnCompletionListener(null) } catch (_: Exception) {}
-        mediaPlayer = null
-        _isPlaying.value = false
-        _currentPosition.value = 0
-        _duration.value = 0L
-        dualEngine.notifyMasterReleased()
+        // Сначала останавливаем текущий плеер (это вызовет notifyMasterReleased в dualEngine),
+        // а ПОТОМ отменяем переход — иначе cancelNext() падал на уже освобождённом плеере
+        stopPlayback()
         transitionCtrl.cancelPendingTransition()
-
-        var playerRef: MediaPlayer? = null
         try {
             val player = MediaPlayer().apply {
                 setAudioAttributes(
@@ -1172,219 +1137,59 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                         .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
                         .build()
                 )
-                // Тот же audio session, что у предыдущего плеера: эквалайзер
-                // продолжает работать и во время ручного кроссфейда.
-                val masterSessionId = try {
-                    oldPlayer?.audioSessionId?.takeIf { it > 0 }
-                } catch (_: Exception) { null }
-                masterSessionId?.let { sessionId ->
-                    try { setAudioSessionId(sessionId) } catch (_: Exception) {}
+                setDataSource(getApplication(), song.uri)
+                prepare()
+                // Фокус запрашиваем до старта звука: если его уже забрал гс/навигатор,
+                // система сразу даст LOSS и мы не начнём играть поверх чужого звука.
+                requestAudioFocusIfNeeded()
+                start()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    playbackParams = PlaybackParams().apply { speed = _playbackSpeed.value }
                 }
-                val cachedSource = TrackPreloader.readyCachedFile(getApplication(), song.uri)
-                setDataSource(getApplication(), cachedSource ?: song.uri)
                 isLooping = (_settings.value.repeatMode == RepeatMode.ONE)
+                setOnCompletionListener { onSongComplete() }
             }
-            player.setOnErrorListener { mp, what, extra ->
-                if (generation != playbackGeneration || mediaPlayer !== mp) return@setOnErrorListener true
-                android.util.Log.w("MusicViewModel", "Ошибка плеера: what=$what extra=$extra")
-                // Не смогли начать играть — возвращаем старый плеер, чтобы музыка не прервалась.
-                try { mp.release() } catch (_: Exception) {}
-                if (oldPlayer != null) {
-                    mediaPlayer = oldPlayer
-                    _currentSong.value = previousSong
-                    _isPlaying.value = try { oldPlayer.isPlaying } catch (_: Exception) { false }
-                    // Возвращаем completion, снятый в начале переключения: без него
-                    // восстановленный трек не перейдёт к следующему.
-                    try {
-                        oldPlayer.setOnCompletionListener { p ->
-                            if (mediaPlayer === p && generation == playbackGeneration) onSongComplete()
-                        }
-                    } catch (_: Exception) {}
-                    dualEngine.setMasterPlayer(oldPlayer)
-                    startProgressTracking()
-                    pushNotificationState(forceMetadata = true)
-                    syncBridgeState()
-                }
-                true
+            mediaPlayer        = player
+            applyVolumeWithBalance()   // apply volume + preamp + L/R balance to the new player
+            _currentSong.value = song
+            _isPlaying.value   = true
+            _duration.value    = player.duration.toLong()
+            trackingStartMs    = System.currentTimeMillis()
+            trackingSongId     = song.id
+            startProgressTracking()
+            loadLyricsForSong(song)
+            pushNotificationState(forceMetadata = true)
+            syncBridgeState()
+
+            // Передаём плеер в движок и планируем переход
+            dualEngine.setMasterPlayer(player)
+            dualEngine.setPlaybackSpeed(_playbackSpeed.value)
+            dualEngine.onPlayerSwapped = { newMaster ->
+                // Вызывается когда кроссфейд поменял плееры местами —
+                // обновляем ссылку на активный MediaPlayer и вешаем completion.
+                mediaPlayer = newMaster
+                try { newMaster.setOnCompletionListener { onSongComplete() } } catch (_: Exception) {}
+                try { newMaster.isLooping = (_settings.value.repeatMode == RepeatMode.ONE) } catch (_: Exception) {}
+                try { attachEqualizerToSession(newMaster.audioSessionId) } catch (_: Exception) {}
             }
-            playerRef = player
-            // Completion сразу: иначе до первого кроссфейда конец трека никто не поймает.
-            // Guard по ссылке — завершение устаревшего/затухающего плеера не вызывает playNext().
-            player.setOnCompletionListener { mp ->
-                if (mediaPlayer === mp && generation == playbackGeneration) onSongComplete()
-            }
-            player.setOnPreparedListener { mp ->
-                if (generation != playbackGeneration) {
-                    // Пока трек готовился, пользователь выбрал другой — глушим и убираем.
-                    try { mp.setOnCompletionListener(null) } catch (_: Exception) {}
-                    try { mp.release() } catch (_: Exception) {}
-                    return@setOnPreparedListener
-                }
-                try {
-                    // Эквалайзер цепляем ДО старта: звуковой тракт уже собран, и начало
-                    // трека не щёлкает от перестройки аудиоэффектов на ходу.
-                    try { attachEqualizerToSession(mp.audioSessionId) } catch (_: Exception) {}
-
-                    // Фокус запрашиваем ДО старта звука: если его уже забрал гс/навигатор,
-                    // система сразу даст LOSS и мы не начнём играть поверх чужого звука.
-                    requestAudioFocusIfNeeded()
-
-                    val switchFadeMs = if (_transitionSettings.value.isEnabled && oldPlayer != null) {
-                        _transitionSettings.value.durationMs.toLong().coerceAtLeast(120L)
-                    } else 0L
-                    if (switchFadeMs > 0L) mp.setVolume(0f, 0f)
-
-                    mp.start()
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        try {
-                            mp.playbackParams = PlaybackParams().apply { speed = _playbackSpeed.value }
-                        } catch (_: Exception) {}
-                    }
-
-                    mediaPlayer        = mp
-                    _currentSong.value = song
-                    _isPlaying.value   = true
-                    _duration.value    = try { mp.duration.toLong() } catch (_: Exception) { song.duration }
-                    trackingStartMs    = System.currentTimeMillis()
-                    trackingSongId     = song.id
-                    startProgressTracking()
-                    loadLyricsForSong(song)
-                    pushNotificationState(forceMetadata = true)
-                    syncBridgeState()
-
-                    // Передаём плеер в движок и планируем переход
-                    dualEngine.setMasterPlayer(mp, if (switchFadeMs > 0L) 0f else 1f)
-                    dualEngine.setPlaybackSpeed(_playbackSpeed.value)
-                    dualEngine.onPlayerSwapped = { newMaster ->
-                        // Вызывается когда кроссфейд поменял плееры местами —
-                        // обновляем ссылку на активный MediaPlayer и вешаем completion.
-                        mediaPlayer = newMaster
-                        try {
-                            newMaster.setOnCompletionListener { mp ->
-                                if (mediaPlayer === mp) onSongComplete()
-                            }
-                        } catch (_: Exception) {}
-                        try { newMaster.isLooping = (_settings.value.repeatMode == RepeatMode.ONE) } catch (_: Exception) {}
-                        try { attachEqualizerToSession(newMaster.audioSessionId) } catch (_: Exception) {}
-                    }
-
-                    if (switchFadeMs > 0L && oldPlayer != null) {
-                        crossfadeManualSwitch(oldPlayer, mp, switchFadeMs, generation)
-                        // Предзагрузку следующего планируем ПОСЛЕ фейда — планировщик
-                        // трогает громкость мастера и затёр бы разгон нового трека.
-                    } else {
-                        applyVolumeWithBalance()
-                        fadeOutAndRelease(oldPlayer, generation)
-                        scheduleNextTransition(song)
-                    }
-                } catch (e: Exception) {
-                    e.printStackTrace()
-                }
-            }
-            player.prepareAsync()
+            // Attach equalizer effects to the new MediaPlayer's audio session
+            try { attachEqualizerToSession(player.audioSessionId) } catch (_: Exception) {}
+            scheduleNextTransition(song)
         } catch (e: Exception) {
             e.printStackTrace()
-            // Источник не назначился/не создался — отдаём старый плеер как был.
-            runCatching {
-                playerRef?.setOnCompletionListener(null)
-                playerRef?.release()
+            // Ошибка не должна проходить молча: трек «не включался», и было непонятно почему
+            val reason = if (e is SecurityException) {
+                "нет доступа к файлу. Разреши «Музыка и аудио» в настройках приложения"
+            } else {
+                "${e.javaClass.simpleName}: ${e.message ?: "неизвестная ошибка"}"
             }
-            mediaPlayer = oldPlayer
-            _currentSong.value = previousSong
-            if (oldPlayer != null) {
-                _isPlaying.value = try { oldPlayer.isPlaying } catch (_: Exception) { false }
-                try {
-                    oldPlayer.setOnCompletionListener { p ->
-                        if (mediaPlayer === p && generation == playbackGeneration) onSongComplete()
-                    }
-                } catch (_: Exception) {}
-                dualEngine.setMasterPlayer(oldPlayer)
-                startProgressTracking()
-                pushNotificationState(forceMetadata = true)
-                syncBridgeState()
+            android.os.Handler(android.os.Looper.getMainLooper()).post {
+                android.widget.Toast.makeText(
+                    getApplication(),
+                    "Не удалось включить трек: $reason",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
-        }
-    }
-
-    /**
-     * Плавно глушит и освобождает старый плеер после старта нового.
-     * Короткое (≈160 мс) затухание вместо мгновенного release() — без щелчка.
-     */
-    private fun fadeOutAndRelease(player: MediaPlayer?, generation: Long) {
-        if (player == null) return
-        viewModelScope.launch(Dispatchers.Main) {
-            val steps = 8
-            repeat(steps) { i ->
-                // Живые значения на каждом тике: смена громкости/preamp/баланса
-                // во время затухания применяется без рассинхрона.
-                val (baseLeft, baseRight) = currentUserVolumePair()
-                // Гард только для setVolume: при смене поколения плеер уже ничей,
-                // и его ОБЯЗАТЕЛЬНО нужно освободить, иначе утечка MediaPlayer.
-                if (generation == playbackGeneration) {
-                    val envelope = 1f - (i + 1f) / steps
-                    try { player.setVolume(baseLeft * envelope, baseRight * envelope) } catch (_: Exception) {}
-                }
-                delay(20)
-            }
-            try { player.setOnCompletionListener(null) } catch (_: Exception) {}
-            try { if (player.isPlaying) player.stop() } catch (_: Exception) {}
-            try { player.release() } catch (_: Exception) {}
-        }
-    }
-
-    /**
-     * Кроссфейд ручного переключения: новый плеер разгоняется 0→1, старый параллельно
-     * гаснет 1→0. Работает для ЛЮБОГО источника команды — кнопки в шторке, медиа-кнопки,
-     * сообщение из ExteraGram, тап по треку: все они сходятся в startPlayback().
-     * По завершении освобождает старый плеер и планирует предзагрузку следующего трека.
-     */
-    private fun crossfadeManualSwitch(
-        oldPlayer: MediaPlayer,
-        newPlayer: MediaPlayer,
-        fadeMs: Long,
-        generation: Long,
-    ) {
-        viewModelScope.launch(Dispatchers.Main) {
-            // Движок оповещён: пока идёт ручной фейд, setUserVolume/setDuckFactor
-            // не должны сбрасывать громкость мастера к полной — это давало скачок
-            // «тихо → громко» посреди разгона нового трека.
-            dualEngine.beginManualFade()
-            try {
-                val startAt = SystemClock.uptimeMillis()
-                val stepMs = 20L
-                while (true) {
-                    // Живые значения на каждом тике: громкость/preamp/баланс,
-                    // изменённые посреди фейда, применяются без скачков.
-                    val (l, r) = currentUserVolumePair()
-                    val progress = ((SystemClock.uptimeMillis() - startAt).toFloat() / fadeMs).coerceIn(0f, 1f)
-                    // Старый гасим всегда: он «ничей» и в конце обязан освободиться.
-                    try {
-                        oldPlayer.setVolume(
-                            (l * (1f - progress)).coerceIn(0f, 1f),
-                            (r * (1f - progress)).coerceIn(0f, 1f)
-                        )
-                    } catch (_: Exception) {}
-                    if (generation == playbackGeneration) {
-                        try {
-                            newPlayer.setVolume((l * progress).coerceIn(0f, 1f), (r * progress).coerceIn(0f, 1f))
-                        } catch (_: Exception) {}
-                    }
-                    if (progress >= 1f) break
-                    delay(stepMs)
-                }
-            } finally {
-                dualEngine.endManualFade()
-            }
-            if (mediaPlayer !== oldPlayer) {
-                // Плеер не восстанавливали после ошибки — можно освобождать.
-                try { oldPlayer.setOnCompletionListener(null) } catch (_: Exception) {}
-                try { if (oldPlayer.isPlaying) oldPlayer.stop() } catch (_: Exception) {}
-                try { oldPlayer.release() } catch (_: Exception) {}
-            }
-            applyVolumeWithBalance()
-            // Только теперь планируем переход/предзагрузку: планировщик трогает громкость
-            // мастера и затёр бы разгон нового трека, если запустить его раньше.
-            _currentSong.value?.let { scheduleNextTransition(it) }
         }
     }
 
@@ -1425,10 +1230,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             },
             settings             = settings,
             onTransitionComplete = { finishEngineTransition(nextSong) },
-            onSwapReady          = { swappedToSong -> swapUiToSong(swappedToSong, recordHistory = true) },
-            // B не подготовилась вовремя и исходящий дошёл до конца молча:
-            // переходим к следующему треку штатно, чтобы очередь не остановилась.
-            onTransitionFailed   = { playNext() }
+            onSwapReady          = { swappedToSong -> swapUiToSong(swappedToSong, recordHistory = true) }
         )
     }
 
@@ -1447,8 +1249,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Обновление UI в начале кроссфейда: название/обложка соответствуют уже играющему
-     * треку. Используется и плановым кроссфейдом, и ручным переходом на предзагруженный
-     * трек (tryEngineTransitionTo).
+     * треку. Вызывается планировщиком через onSwapReady в момент смены мастеров.
      */
     private fun swapUiToSong(swappedToSong: Song, recordHistory: Boolean) {
         // Сначала сбрасываем статистику ИСХОДЯЩЕГО трека: после смены
@@ -1487,37 +1288,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         loadLyricsForSong(swappedToSong)
         pushNotificationState(forceMetadata = true)
         syncBridgeState()
-    }
-
-    /**
-     * Мгновенный ручной переход на трек, который движок уже предзагрузил
-     * («во время музыки», за несколько секунд до конца текущего).
-     * Возвращает true, если переход выполнен — тогда startPlayback не нужен.
-     *
-     * Так «Следующий» из шторки, медиа-кнопок или сообщения ExteraGram работает
-     * без пересоздания плеера: трек уже готов и стартует мгновенно, с кроссфейдом.
-     */
-    private fun tryEngineTransitionTo(song: Song, rememberHistory: Boolean): Boolean {
-        if (!_transitionSettings.value.isEnabled) return false
-        if (dualEngine.isTransitionRunning()) return false
-        if (!dualEngine.isNextPrepared()) return false
-        if (dualEngine.lastPreparedUri != song.uri) return false
-        val current = _currentSong.value ?: return false
-        if (current.id == song.id) return false
-
-        // Фокус нужен сразу: после быстрого перехода трек уже играет, и потеря
-        // фокуса (гс, навигатор) обязана нас услышать с первой секунды.
-        requestAudioFocusIfNeeded()
-
-        // Планировщик старого трека больше не нужен, но playerB трогать нельзя —
-        // он сейчас станет мастером.
-        transitionCtrl.cancelSchedulerOnly()
-        dualEngine.performTransition(_transitionSettings.value,
-            onTransitionComplete = { finishEngineTransition(song) }
-        ) {
-            swapUiToSong(song, recordHistory = rememberHistory)
-        }
-        return true
     }
 
     /** Следующий трек без запуска playback — для планирования кроссфейда. */
@@ -1706,9 +1476,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         _isPlaying.value = true
         dualEngine.setDuckFactor(1f)
-        // Прямую установку полной громкости пропускаем во время ручного кроссфейда:
-        // её ведёт фейд-цикл, скачок к полной громкости здесь разрывал разгон трека.
-        if (!dualEngine.isManualFadeRunning()) applyPlaybackVolume(1f)
+        applyPlaybackVolume(1f)
         startProgressTracking()
         pushNotificationState(forceMetadata = true)
         syncBridgeState()
@@ -1757,9 +1525,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         transitionCtrl.cancelPendingTransition()
         mediaPlayer?.seekTo(position.toInt())
         _currentPosition.value = position
-        // Планировщик мог успеть снять completion у мастера (holdOutgoingCompletion)
-        // до того, как переход отменили перемоткой — возвращаем его, иначе трек
-        // после перемотки доиграет до конца и не перейдёт к следующему.
+        // Фейд мог успеть снять completion у мастера (performOverlapTransition делает
+        // это в момент старта) — возвращаем его, иначе трек после перемотки доиграет
+        // до конца и не перейдёт к следующему.
         mediaPlayer?.let { mp ->
             try {
                 mp.setOnCompletionListener { p -> if (mediaPlayer === p) onSongComplete() }

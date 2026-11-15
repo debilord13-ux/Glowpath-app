@@ -122,7 +122,6 @@ import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -470,7 +469,6 @@ fun PlayerQueueHost(
                         ink = ink,
                         panelColor = panelColor,
                         display = display,
-                        switcherEnabled = settings.queueSleepTimerSwitcher,
                         panelMode = panelMode,
                         onPanelModeChange = { panelMode = it },
                         sleepTimerPanel = { SleepTimerQuickPanel(viewModel, vivid) },
@@ -783,7 +781,6 @@ private fun PlayerQueueSheetContent(
     ink: Color,
     panelColor: Color,
     display: (Song) -> QueueDisplay,
-    switcherEnabled: Boolean,
     panelMode: PlayerQueuePanelMode,
     onPanelModeChange: (PlayerQueuePanelMode) -> Unit,
     sleepTimerPanel: @Composable () -> Unit,
@@ -796,7 +793,6 @@ private fun PlayerQueueSheetContent(
     onSaveQueue: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val font = LocalAppFontFamily.current
     val listState = rememberLazyListState(
         initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0),
     )
@@ -832,32 +828,12 @@ private fun PlayerQueueSheetContent(
                     tint = colors.onSurface,
                 )
             }
-            AnimatedContent(
-                targetState = if (switcherEnabled) panelMode else queue.size,
-                transitionSpec = { queueFadeThrough(reduceMotion) },
-                modifier = Modifier
-                    .align(Alignment.Center),
-                label = "queue-title",
-            ) { target ->
-                if (switcherEnabled) {
-                    QueuePanelModeSwitcher(
-                        current = target as PlayerQueuePanelMode,
-                        vivid = vivid,
-                        onSelect = onPanelModeChange,
-                    )
-                } else {
-                    val count = target as Int
-                    Text(
-                        text = if (count == 0) "Очередь" else "Очередь · $count",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontFamily = font,
-                        color = colors.onSurface,
-                        textAlign = TextAlign.Center,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
+            QueuePanelModeSwitcher(
+                current = panelMode,
+                vivid = vivid,
+                onSelect = onPanelModeChange,
+                modifier = Modifier.align(Alignment.Center),
+            )
             AnimatedContent(
                 targetState = queue.isNotEmpty() && panelMode == PlayerQueuePanelMode.QUEUE,
                 transitionSpec = { queueIconTransform(reduceMotion) },
@@ -880,9 +856,14 @@ private fun PlayerQueueSheetContent(
                 }
             }
         }
-        if (switcherEnabled && panelMode == PlayerQueuePanelMode.SLEEP_TIMER) {
-            Box(Modifier.fillMaxWidth()) { sleepTimerPanel() }
-        } else {
+        AnimatedContent(
+            targetState = panelMode,
+            transitionSpec = { queueFadeThrough(reduceMotion) },
+            label = "queue-panel",
+        ) { mode ->
+            if (mode == PlayerQueuePanelMode.SLEEP_TIMER) {
+                Box(Modifier.fillMaxWidth()) { sleepTimerPanel() }
+            } else {
         LazyColumn(
             modifier = Modifier.fadingListTop { listState.canScrollBackward },
             state = listState,
@@ -1033,6 +1014,7 @@ private fun PlayerQueueSheetContent(
                 }
             }
         }
+            }
         }
     }
 }
@@ -1043,9 +1025,13 @@ private fun QueuePanelModeSwitcher(
     current: PlayerQueuePanelMode,
     vivid: Color,
     onSelect: (PlayerQueuePanelMode) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val colors = MaterialTheme.colorScheme
-    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         QueuePanelModeTab(
             label = "Очередь",
             icon = Icons.Rounded.QueueMusic,

@@ -38,10 +38,6 @@ class DualPlayerEngine(private val context: Context) {
     private var transitionJob: Job? = null
     private var transitionRunning = false
 
-    /** Идёт ручной кроссфейд ViewModel (crossfadeManualSwitch): громкость мастера
-     *  ведёт его цикл, и setUserVolume/setDuckFactor не должны сбрасывать её к полной. */
-    private var manualFadeRunning = false
-
     private var playerA: MediaPlayer? = null
     private var playerB: MediaPlayer? = null
 
@@ -50,34 +46,19 @@ class DualPlayerEngine(private val context: Context) {
     private var playbackSpeed: Float = 1f
     private var nextPrepared: Boolean = false
 
-    companion object {
-        /** Сколько ждать докачки кэша перед подготовкой B по исходному URI. */
-        private const val PRELOAD_AWAIT_MS = 3_500L
-    }
-
     /** Приглушение аудиофокусом (гс/уведомления) — общий множитель на оба плеера,
      *  чтобы duck работал и во время кроссфейда. */
     private var duckFactor: Float = 1f
 
-    /** URI трека, заряженного в playerB — по нему ручной «Следующий» понимает,
-     *  что переход можно сделать мгновенно, без пересоздания плеера. */
-    var lastPreparedUri: Uri? = null
-        private set
-
     var onPlayerSwapped: ((masterPlayer: MediaPlayer) -> Unit)? = null
 
-    /**
-     * @param initialEnvelope стартовая громкость мастера 0..1: при кроссфейде
-     *        ручного переключения новый плеер должен стартовать с нуля,
-     *        а не с полной громкости (иначе сумма двух плееров «выпрыгивает»). */
-    fun setMasterPlayer(player: MediaPlayer, initialEnvelope: Float = 1f) {
+    fun setMasterPlayer(player: MediaPlayer) {
         releaseQuiet(playerA)
         releaseQuiet(playerB)
         playerB = null
         nextPrepared = false
-        lastPreparedUri = null
         playerA = player
-        applyVolume(player, initialEnvelope.coerceIn(0f, 1f))
+        applyVolume(player, 1f)
     }
 
     fun setUserVolume(volume: Float) {
@@ -87,7 +68,7 @@ class DualPlayerEngine(private val context: Context) {
     fun setUserVolume(left: Float, right: Float) {
         userVolumeL = left.coerceIn(0f, 1f)
         userVolumeR = right.coerceIn(0f, 1f)
-        if (!transitionRunning && !manualFadeRunning) {
+        if (!transitionRunning) {
             playerA?.let { applyVolume(it, 1f) }
         }
     }
@@ -95,44 +76,9 @@ class DualPlayerEngine(private val context: Context) {
     /** Общий множитель приглушения (0..1), действует на оба плеера мгновенно. */
     fun setDuckFactor(factor: Float) {
         duckFactor = factor.coerceIn(0f, 1f)
-        if (!transitionRunning && !manualFadeRunning) {
+        if (!transitionRunning) {
             playerA?.let { applyVolume(it, 1f) }
         }
-    }
-
-    /** Начало ручного кроссфейда: движок временно не управляет громкостью мастера. */
-    fun beginManualFade() {
-        manualFadeRunning = true
-    }
-
-    /** Конец ручного кроссфейда. */
-    fun endManualFade() {
-        manualFadeRunning = false
-    }
-
-    fun isManualFadeRunning(): Boolean = manualFadeRunning
-
-    /**
-     * Тихий (нулевая громкость) старт предзагруженного B чуть раньше окна кроссфейда:
-     * раскрутка второго декодера происходит до фейда и не слышна как короткое
-     * спотыкание играющего трека в момент перехода. Идемпотентно, безопасно.
-     */
-    fun startNextSilently() {
-        if (transitionRunning || manualFadeRunning) return
-        val next = playerB
-        if (next == null || !nextPrepared) return
-        try {
-            if (!next.isPlaying) {
-                next.setVolume(0f, 0f)
-                next.start()
-            }
-        } catch (_: Exception) {}
-    }
-
-    /** Снимает onCompletion у мастера: конец трека посреди ожидания готовности B
-     *  не должен запускать playNext() и пересоздавать плеер посреди перехода. */
-    fun holdOutgoingCompletion() {
-        try { playerA?.setOnCompletionListener(null) } catch (_: Exception) {}
     }
 
     fun setPlaybackSpeed(speed: Float) {
@@ -157,21 +103,12 @@ class DualPlayerEngine(private val context: Context) {
         }
     }
 
-    suspend fun prepareNext(uri: Uri, startPositionMs: Long = 0L) {
+    fun prepareNext(uri: Uri, startPositionMs: Long = 0L) {
         try {
             releaseQuiet(playerB)
             nextPrepared = false
-            lastPreparedUri = null
             val player = MediaPlayer()
             configurePlayer(player)
-            // Общий audio session с мастером: эквалайзер и виртуализатор
-            // действуют на оба плеера с первой же миллисекунды кроссфейда.
-            val masterSessionId = try {
-                playerA?.audioSessionId?.takeIf { it > 0 }
-            } catch (_: Exception) { null }
-            masterSessionId?.let { sessionId ->
-                try { player.setAudioSessionId(sessionId) } catch (_: Exception) {}
-            }
             player.setVolume(0f, 0f)
             player.setOnPreparedListener {
                 try {
@@ -192,13 +129,8 @@ class DualPlayerEngine(private val context: Context) {
                 releaseQuiet(mp)
                 true
             }
-            // Если трек успели докачать в кэш — готовимся по локальному файлу,
-            // без задержек медленного content-провайдера. Идентификатор для
-            // ручного перехода остаётся исходный URI.
-            val playbackSource = TrackPreloader.readyOrAwait(context, uri, PRELOAD_AWAIT_MS) ?: uri
-            player.setDataSource(context, playbackSource)
+            player.setDataSource(context, uri)
             playerB = player
-            lastPreparedUri = uri
             player.prepareAsync()
         } catch (e: Exception) {
             e.printStackTrace()
@@ -220,7 +152,6 @@ class DualPlayerEngine(private val context: Context) {
         transitionJob?.cancel()
         transitionRunning = false
         nextPrepared = false
-        lastPreparedUri = null
         releaseQuiet(playerB)
         playerB = null
         playerA?.let { applyVolume(it, 1f) }
@@ -230,15 +161,9 @@ class DualPlayerEngine(private val context: Context) {
         transitionJob?.cancel()
         transitionRunning = false
         nextPrepared = false
-        // Фейд мог оборваться на середине: мастер продолжает играть (его держит
-        // ViewModel до готовности нового плеера), поэтому возвращаем ему полную
-        // громкость — иначе трек зависает на промежуточной громкости, а следующий
-        // фейд начинается со слышимого скачка «тихо → громко».
-        playerA?.let { applyVolume(it, 1f) }
         playerA = null
         releaseQuiet(playerB)
         playerB = null
-        lastPreparedUri = null
     }
 
     fun performTransition(
@@ -281,10 +206,9 @@ class DualPlayerEngine(private val context: Context) {
         try { outgoing.setOnCompletionListener(null) } catch (_: Exception) {}
         try { nextPlayer.setOnCompletionListener(null) } catch (_: Exception) {}
 
-        // B могла уже стартовать тихо (startNextSilently) — повторный start() не нужен,
-        // скорость применяется в любом случае, сразу после того как плеер играет.
         nextPlayer.setVolume(0f, 0f)
-        if (!nextPlayer.isPlaying) nextPlayer.start()
+        nextPlayer.start()
+        // Скорость — только после start(), иначе см. примечание в шапке класса.
         if (playbackSpeed != 1f) applySpeed(nextPlayer)
 
         val fadeMs = settings.durationMs.toLong().coerceAtLeast(0L)
@@ -299,7 +223,6 @@ class DualPlayerEngine(private val context: Context) {
             releaseQuiet(outgoing)
             playerB = null
             nextPrepared = false
-            lastPreparedUri = null
             onComplete()
             return
         }
@@ -339,7 +262,6 @@ class DualPlayerEngine(private val context: Context) {
         releaseQuiet(outgoing)
         playerB = null
         nextPrepared = false
-        lastPreparedUri = null
         onComplete()
     }
 
@@ -351,7 +273,6 @@ class DualPlayerEngine(private val context: Context) {
         playerA = null
         playerB = null
         nextPrepared = false
-        lastPreparedUri = null
     }
 
     private fun configurePlayer(player: MediaPlayer) {
