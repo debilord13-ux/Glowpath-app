@@ -38,6 +38,10 @@ class DualPlayerEngine(private val context: Context) {
     private var transitionJob: Job? = null
     private var transitionRunning = false
 
+    /** Идёт ручной кроссфейд ViewModel (crossfadeManualSwitch): громкость мастера
+     *  ведёт его цикл, и setUserVolume/setDuckFactor не должны сбрасывать её к полной. */
+    private var manualFadeRunning = false
+
     private var playerA: MediaPlayer? = null
     private var playerB: MediaPlayer? = null
 
@@ -83,7 +87,7 @@ class DualPlayerEngine(private val context: Context) {
     fun setUserVolume(left: Float, right: Float) {
         userVolumeL = left.coerceIn(0f, 1f)
         userVolumeR = right.coerceIn(0f, 1f)
-        if (!transitionRunning) {
+        if (!transitionRunning && !manualFadeRunning) {
             playerA?.let { applyVolume(it, 1f) }
         }
     }
@@ -91,9 +95,44 @@ class DualPlayerEngine(private val context: Context) {
     /** Общий множитель приглушения (0..1), действует на оба плеера мгновенно. */
     fun setDuckFactor(factor: Float) {
         duckFactor = factor.coerceIn(0f, 1f)
-        if (!transitionRunning) {
+        if (!transitionRunning && !manualFadeRunning) {
             playerA?.let { applyVolume(it, 1f) }
         }
+    }
+
+    /** Начало ручного кроссфейда: движок временно не управляет громкостью мастера. */
+    fun beginManualFade() {
+        manualFadeRunning = true
+    }
+
+    /** Конец ручного кроссфейда. */
+    fun endManualFade() {
+        manualFadeRunning = false
+    }
+
+    fun isManualFadeRunning(): Boolean = manualFadeRunning
+
+    /**
+     * Тихий (нулевая громкость) старт предзагруженного B чуть раньше окна кроссфейда:
+     * раскрутка второго декодера происходит до фейда и не слышна как короткое
+     * спотыкание играющего трека в момент перехода. Идемпотентно, безопасно.
+     */
+    fun startNextSilently() {
+        if (transitionRunning || manualFadeRunning) return
+        val next = playerB
+        if (next == null || !nextPrepared) return
+        try {
+            if (!next.isPlaying) {
+                next.setVolume(0f, 0f)
+                next.start()
+            }
+        } catch (_: Exception) {}
+    }
+
+    /** Снимает onCompletion у мастера: конец трека посреди ожидания готовности B
+     *  не должен запускать playNext() и пересоздавать плеер посреди перехода. */
+    fun holdOutgoingCompletion() {
+        try { playerA?.setOnCompletionListener(null) } catch (_: Exception) {}
     }
 
     fun setPlaybackSpeed(speed: Float) {
@@ -191,6 +230,11 @@ class DualPlayerEngine(private val context: Context) {
         transitionJob?.cancel()
         transitionRunning = false
         nextPrepared = false
+        // Фейд мог оборваться на середине: мастер продолжает играть (его держит
+        // ViewModel до готовности нового плеера), поэтому возвращаем ему полную
+        // громкость — иначе трек зависает на промежуточной громкости, а следующий
+        // фейд начинается со слышимого скачка «тихо → громко».
+        playerA?.let { applyVolume(it, 1f) }
         playerA = null
         releaseQuiet(playerB)
         playerB = null
@@ -237,9 +281,10 @@ class DualPlayerEngine(private val context: Context) {
         try { outgoing.setOnCompletionListener(null) } catch (_: Exception) {}
         try { nextPlayer.setOnCompletionListener(null) } catch (_: Exception) {}
 
+        // B могла уже стартовать тихо (startNextSilently) — повторный start() не нужен,
+        // скорость применяется в любом случае, сразу после того как плеер играет.
         nextPlayer.setVolume(0f, 0f)
-        nextPlayer.start()
-        // Скорость — только после start(), иначе см. примечание в шапке класса.
+        if (!nextPlayer.isPlaying) nextPlayer.start()
         if (playbackSpeed != 1f) applySpeed(nextPlayer)
 
         val fadeMs = settings.durationMs.toLong().coerceAtLeast(0L)

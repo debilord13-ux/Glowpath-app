@@ -316,7 +316,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     /** Apply current volume + preamp + balance to the player. */
     private fun applyVolumeWithBalance() {
         val (left, right) = currentUserVolumePair()
-        mediaPlayer?.setVolume(left.coerceIn(0f, 1f), right.coerceIn(0f, 1f))
+        // Во время ручного кроссфейда громкость мастера ведёт фейд-цикл: прямой
+        // setVolume здесь дал бы скачок к полной громкости посреди разгона.
+        // Новый уровень подхватит сам цикл на ближайшем тике (20 мс).
+        if (!dualEngine.isManualFadeRunning()) {
+            mediaPlayer?.setVolume(left.coerceIn(0f, 1f), right.coerceIn(0f, 1f))
+        }
         dualEngine.setUserVolume(left, right)
     }
 
@@ -1308,9 +1313,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private fun fadeOutAndRelease(player: MediaPlayer?, generation: Long) {
         if (player == null) return
         viewModelScope.launch(Dispatchers.Main) {
-            val (baseLeft, baseRight) = currentUserVolumePair()
             val steps = 8
             repeat(steps) { i ->
+                // Живые значения на каждом тике: смена громкости/preamp/баланса
+                // во время затухания применяется без рассинхрона.
+                val (baseLeft, baseRight) = currentUserVolumePair()
                 // Гард только для setVolume: при смене поколения плеер уже ничей,
                 // и его ОБЯЗАТЕЛЬНО нужно освободить, иначе утечка MediaPlayer.
                 if (generation == playbackGeneration) {
@@ -1338,25 +1345,35 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         generation: Long,
     ) {
         viewModelScope.launch(Dispatchers.Main) {
-            val (l, r) = currentUserVolumePair()
-            val startAt = SystemClock.uptimeMillis()
-            val stepMs = 20L
-            while (true) {
-                val progress = ((SystemClock.uptimeMillis() - startAt).toFloat() / fadeMs).coerceIn(0f, 1f)
-                // Старый гасим всегда: он «ничей» и в конце обязан освободиться.
-                try {
-                    oldPlayer.setVolume(
-                        (l * (1f - progress)).coerceIn(0f, 1f),
-                        (r * (1f - progress)).coerceIn(0f, 1f)
-                    )
-                } catch (_: Exception) {}
-                if (generation == playbackGeneration) {
+            // Движок оповещён: пока идёт ручной фейд, setUserVolume/setDuckFactor
+            // не должны сбрасывать громкость мастера к полной — это давало скачок
+            // «тихо → громко» посреди разгона нового трека.
+            dualEngine.beginManualFade()
+            try {
+                val startAt = SystemClock.uptimeMillis()
+                val stepMs = 20L
+                while (true) {
+                    // Живые значения на каждом тике: громкость/preamp/баланс,
+                    // изменённые посреди фейда, применяются без скачков.
+                    val (l, r) = currentUserVolumePair()
+                    val progress = ((SystemClock.uptimeMillis() - startAt).toFloat() / fadeMs).coerceIn(0f, 1f)
+                    // Старый гасим всегда: он «ничей» и в конце обязан освободиться.
                     try {
-                        newPlayer.setVolume((l * progress).coerceIn(0f, 1f), (r * progress).coerceIn(0f, 1f))
+                        oldPlayer.setVolume(
+                            (l * (1f - progress)).coerceIn(0f, 1f),
+                            (r * (1f - progress)).coerceIn(0f, 1f)
+                        )
                     } catch (_: Exception) {}
+                    if (generation == playbackGeneration) {
+                        try {
+                            newPlayer.setVolume((l * progress).coerceIn(0f, 1f), (r * progress).coerceIn(0f, 1f))
+                        } catch (_: Exception) {}
+                    }
+                    if (progress >= 1f) break
+                    delay(stepMs)
                 }
-                if (progress >= 1f) break
-                delay(stepMs)
+            } finally {
+                dualEngine.endManualFade()
             }
             if (mediaPlayer !== oldPlayer) {
                 // Плеер не восстанавливали после ошибки — можно освобождать.
@@ -1408,7 +1425,10 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             },
             settings             = settings,
             onTransitionComplete = { finishEngineTransition(nextSong) },
-            onSwapReady          = { swappedToSong -> swapUiToSong(swappedToSong, recordHistory = true) }
+            onSwapReady          = { swappedToSong -> swapUiToSong(swappedToSong, recordHistory = true) },
+            // B не подготовилась вовремя и исходящий дошёл до конца молча:
+            // переходим к следующему треку штатно, чтобы очередь не остановилась.
+            onTransitionFailed   = { playNext() }
         )
     }
 
@@ -1686,7 +1706,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         _isPlaying.value = true
         dualEngine.setDuckFactor(1f)
-        applyPlaybackVolume(1f)
+        // Прямую установку полной громкости пропускаем во время ручного кроссфейда:
+        // её ведёт фейд-цикл, скачок к полной громкости здесь разрывал разгон трека.
+        if (!dualEngine.isManualFadeRunning()) applyPlaybackVolume(1f)
         startProgressTracking()
         pushNotificationState(forceMetadata = true)
         syncBridgeState()
@@ -1735,6 +1757,14 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         transitionCtrl.cancelPendingTransition()
         mediaPlayer?.seekTo(position.toInt())
         _currentPosition.value = position
+        // Планировщик мог успеть снять completion у мастера (holdOutgoingCompletion)
+        // до того, как переход отменили перемоткой — возвращаем его, иначе трек
+        // после перемотки доиграет до конца и не перейдёт к следующему.
+        mediaPlayer?.let { mp ->
+            try {
+                mp.setOnCompletionListener { p -> if (mediaPlayer === p) onSongComplete() }
+            } catch (_: Exception) {}
+        }
         // Перепланируем переход с новой позиции
         _currentSong.value?.let { scheduleNextTransition(it) }
         pushNotificationState(forceMetadata = false)

@@ -36,7 +36,8 @@ class TransitionController(
         getDurationMs: () -> Long,
         settings: TransitionSettings,
         onTransitionComplete: () -> Unit,
-        onSwapReady: ((Song) -> Unit)? = null
+        onSwapReady: ((Song) -> Unit)? = null,
+        onTransitionFailed: (() -> Unit)? = null
     ) {
         cancelScheduler()
 
@@ -60,8 +61,9 @@ class TransitionController(
             if (!isActive || duration <= 0L) return@launch
 
             val requestedFade = settings.durationMs.toLong().coerceAtLeast(0L)
-            // Оставляем 80 мс запаса до onCompletion исходящего трека.
-            val maxFade = (duration - 80L).coerceAtLeast(0L)
+            // Запас до конца исходящего трека увеличен: при обрезке впритык фейд
+            // догонял конец трека и обрывался в тишину на последних миллисекундах.
+            val maxFade = (duration - 250L).coerceAtLeast(0L)
             val fadeDur = requestedFade.coerceAtMost(maxFade)
             val appliedSettings = if (fadeDur.toInt() == settings.durationMs) {
                 settings
@@ -74,6 +76,9 @@ class TransitionController(
             // следующего трека и подготовиться плеер B — переход стартует без паузы.
             val prebufferLead = 10_000L.coerceAtLeast(fadeDur + 1_500L)
             val prebufferPoint = (transitionPoint - prebufferLead).coerceAtLeast(0L)
+            // Тихий старт B за 400 мс до окна фейда: раскрутка второго декодера
+            // происходит до перехода и не слышна как спотыкание играющего трека.
+            val silentStartPoint = (transitionPoint - 400L).coerceAtLeast(0L)
 
             var prebuffered = false
 
@@ -88,12 +93,22 @@ class TransitionController(
                     prebuffered = true
                 }
 
+                if (pos >= silentStartPoint && pos < transitionPoint) {
+                    engine.startNextSilently()
+                }
+
                 if (pos >= transitionPoint) {
                     if (!engine.isTransitionRunning()) {
+                        // Конец исходящего посреди ожидания готовности B не должен
+                        // запускать playNext() и пересоздавать плеер: снимаем completion.
+                        engine.holdOutgoingCompletion()
                         if (prebuffered) {
                             val ready = engine.waitUntilNextPrepared()
                             if (!ready) {
                                 engine.cancelNext()
+                                // Исходящий к этому моменту дошёл до конца молча:
+                                // иначе очередь остановится на треке без звука.
+                                onTransitionFailed?.invoke()
                                 return@launch
                             }
                         } else {
@@ -102,11 +117,22 @@ class TransitionController(
                             val ready = engine.waitUntilNextPrepared()
                             if (!ready) {
                                 engine.cancelNext()
+                                onTransitionFailed?.invoke()
                                 return@launch
                             }
                         }
                         if (!isActive) return@launch
-                        engine.performTransition(appliedSettings, onTransitionComplete) {
+                        // Фейд мог запуститься с опозданием (B готовилась дольше плана):
+                        // ужимаем его до реального остатка исходящего трека, иначе
+                        // затухание продолжается в тишине, а входящий звучит позже.
+                        val posNow = getPositionMs().coerceAtLeast(0L)
+                        val remainingMs = (duration - posNow).coerceAtLeast(0L)
+                        val lateSettings = if (remainingMs < appliedSettings.durationMs) {
+                            appliedSettings.copy(durationMs = remainingMs.toInt())
+                        } else {
+                            appliedSettings
+                        }
+                        engine.performTransition(lateSettings, onTransitionComplete) {
                             onSwapReady?.invoke(nextSong)
                         }
                     }
