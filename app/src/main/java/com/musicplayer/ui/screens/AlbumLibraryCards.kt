@@ -203,16 +203,16 @@ internal fun SharedTransitionScope.AlbumDetailPage(
             AlbumSongSort.Title -> album.songs.sortedBy { it.displayTitle().lowercase() }
             AlbumSongSort.TitleDesc -> album.songs.sortedByDescending { it.displayTitle().lowercase() }
             AlbumSongSort.Artist -> album.songs.sortedWith(
-                compareBy({ it.displayArtist().lowercase() }, { it.displayTitle().lowercase() })
+                compareBy<Song>({ it.displayArtist().lowercase() }, { it.displayTitle().lowercase() })
             )
             AlbumSongSort.ArtistDesc -> album.songs.sortedWith(
-                compareBy({ it.displayArtist().lowercase() }, { it.displayTitle().lowercase() }).reversed()
+                compareBy<Song>({ it.displayArtist().lowercase() }, { it.displayTitle().lowercase() }).reversed()
             )
             AlbumSongSort.Album -> album.songs.sortedWith(
-                compareBy({ it.album.lowercase() }, { it.displayTitle().lowercase() })
+                compareBy<Song>({ it.album.lowercase() }, { it.displayTitle().lowercase() })
             )
             AlbumSongSort.AlbumDesc -> album.songs.sortedWith(
-                compareBy({ it.album.lowercase() }, { it.displayTitle().lowercase() }).reversed()
+                compareBy<Song>({ it.album.lowercase() }, { it.displayTitle().lowercase() }).reversed()
             )
             AlbumSongSort.Duration -> album.songs.sortedBy { it.duration }
             AlbumSongSort.DurationDesc -> album.songs.sortedByDescending { it.duration }
