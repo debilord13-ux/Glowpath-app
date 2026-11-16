@@ -171,6 +171,8 @@ class PreferencesManager(context: Context) {
             putBoolean("resume_on_headphone_connect", settings.resumeOnHeadphoneConnect)
             putBoolean("show_hidden_tracks", settings.showHiddenTracks)
             putBoolean("genius_api_enabled", settings.geniusApiEnabled)
+            // Плавная анимация при РУЧНОМ переключении трека
+            putBoolean("manual_switch_animation", settings.manualSwitchAnimation)
         }.apply()
     }
 
@@ -297,7 +299,8 @@ class PreferencesManager(context: Context) {
             pauseOnHeadphoneDisconnect = prefs.getBoolean("pause_on_headphone_disconnect", true),
             resumeOnHeadphoneConnect = prefs.getBoolean("resume_on_headphone_connect", false),
             showHiddenTracks = prefs.getBoolean("show_hidden_tracks", false),
-            geniusApiEnabled = prefs.getBoolean("genius_api_enabled", true)
+            geniusApiEnabled = prefs.getBoolean("genius_api_enabled", true),
+            manualSwitchAnimation = prefs.getBoolean("manual_switch_animation", false)
         )
     }
 
@@ -316,11 +319,18 @@ class PreferencesManager(context: Context) {
     }
 
     fun loadTransitionSettings(): com.musicplayer.data.TransitionSettings {
+        // EQUAL_POWER был старым дефолтом — у него слышимый «горб» громкости в
+        // середине кроссфейда и вялый хвост. Переносим всех на LINEAR: переход
+        // идёт линейно и заканчивается резко, без «затухающей» херни на стыке.
+        fun linearMigrated(raw: String?): com.musicplayer.data.Curve {
+            val curve = safeEnum(raw, com.musicplayer.data.Curve.LINEAR)
+            return if (curve == com.musicplayer.data.Curve.EQUAL_POWER) com.musicplayer.data.Curve.LINEAR else curve
+        }
         return com.musicplayer.data.TransitionSettings(
             mode       = safeEnum(prefs.getString("transition_mode", null), com.musicplayer.data.TransitionMode.NONE),
             durationMs = prefs.getInt("transition_duration_ms", 2000),
-            curveIn    = safeEnum(prefs.getString("transition_curve_in", null), com.musicplayer.data.Curve.EQUAL_POWER),
-            curveOut   = safeEnum(prefs.getString("transition_curve_out", null), com.musicplayer.data.Curve.EQUAL_POWER)
+            curveIn    = linearMigrated(prefs.getString("transition_curve_in", null)),
+            curveOut   = linearMigrated(prefs.getString("transition_curve_out", null))
         )
     }
 

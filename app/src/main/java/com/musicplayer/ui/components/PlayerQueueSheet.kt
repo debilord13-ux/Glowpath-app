@@ -8,12 +8,14 @@ import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode as AnimationRepeatMode
+import androidx.compose.animation.core.SizeTransform
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -27,6 +29,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -52,13 +55,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Bedtime
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
@@ -85,11 +89,13 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -254,6 +260,19 @@ private fun rememberQueueReduceMotion(): Boolean {
 }
 
 private fun queueFadeThrough(reduceMotion: Boolean): ContentTransform {
+    // Плавное изменение ВЫСОТЫ панели при переключении «Очередь ↔ Таймер»:
+    // без SizeTransform высота шторки менялась скачком. С ним панель плавно
+    // «туды-сюды» меняет размер под новое содержимое.
+    val sizeTransform = if (reduceMotion) {
+        null
+    } else {
+        SizeTransform { _, _ ->
+            tween(
+                durationMillis = QueueMotion.APPEAR_MS + 60,
+                easing = QueueMotion.NavigationEasing,
+            )
+        }
+    }
     if (reduceMotion) {
         return ContentTransform(
             targetContentEnter = fadeIn(tween(QueueMotion.REDUCED_MS)),
@@ -270,7 +289,7 @@ private fun queueFadeThrough(reduceMotion: Boolean): ContentTransform {
             ),
         ),
         initialContentExit = fadeOut(tween(QueueMotion.REDUCED_MS, easing = LinearEasing)),
-        sizeTransform = null,
+        sizeTransform = sizeTransform,
     )
 }
 
@@ -348,6 +367,8 @@ fun PlayerQueueHost(
     gradientColors: List<Color>,
     onQueueTopChanged: (Float) -> Unit = {},
     onQueueExpandedChanged: (Boolean) -> Unit = {},
+    /** Тап по области ВНЕ шторки закрывает её (только ландшафт/планшет). */
+    tapOutsideToDismiss: Boolean = false,
     content: @Composable (PlayerQueueSlots) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
@@ -489,6 +510,20 @@ fun PlayerQueueHost(
                     .padding(bottom = sheetPadding.calculateBottomPadding()),
             ) {
                 content(slots)
+                // Ландшафт/планшет: тап по «пустым» краям вокруг раскрытой очереди
+                // закрывает её. Оверлей стоит ПОВЕРХ контента, но ПОД шторкой —
+                // на саму шторку и её элементы он не влияет.
+                if (tapOutsideToDismiss && queueIsExpanded) {
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .pointerInput(Unit) {
+                                detectTapGestures {
+                                    scope.launch { sheetState.bottomSheetState.partialExpand() }
+                                }
+                            },
+                    )
+                }
             }
         }
         }
@@ -793,9 +828,17 @@ private fun PlayerQueueSheetContent(
     onSaveQueue: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    val listState = rememberLazyListState(
-        initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0),
-    )
+    // Состояние скролла ЖИВЁТ ВЫШЕ переключателя «Очередь/Таймер»: AnimatedContent
+    // уничтожал LazyColumn при уходе на таймер, и позиция списка сбрасывалась.
+    // Плюс rememberSaveable — позиция переживает пересоздание композиции.
+    val listState = rememberSaveable(saver = LazyListState.Saver) {
+        LazyListState(initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0))
+    }
+    val scope = rememberCoroutineScope()
+    // Кнопка «вверх» видна, когда список прокручен хоть чуть-чуть вниз от начала.
+    val showScrollTop by remember(listState) {
+        derivedStateOf { listState.canScrollBackward }
+    }
     val haptics = LocalHapticFeedback.current
     val reduceMotion = rememberQueueReduceMotion()
     val identity = remember(queue) { QueueIdentity(queueHasDuplicateIds(queue)) }
@@ -864,6 +907,8 @@ private fun PlayerQueueSheetContent(
             if (mode == PlayerQueuePanelMode.SLEEP_TIMER) {
                 Box(Modifier.fillMaxWidth()) { sleepTimerPanel() }
             } else {
+                // Обёртка Box — чтобы кнопка «К началу» лежала ПОВЕРХ списка очереди.
+                Box(Modifier.fillMaxWidth()) {
         LazyColumn(
             modifier = Modifier.fadingListTop { listState.canScrollBackward },
             state = listState,
@@ -1014,6 +1059,46 @@ private fun PlayerQueueSheetContent(
                 }
             }
         }
+                    // Кнопка «К началу»: плавно появляется, когда список прокручен вниз,
+                    // и плавно же скроллит к первому треку — без резких прыжков.
+                    AnimatedVisibility(
+                        visible = showScrollTop,
+                        modifier = Modifier.align(Alignment.TopCenter),
+                        enter = fadeIn(tween(160)) + scaleIn(
+                            initialScale = 0.85f,
+                            animationSpec = tween(160, easing = QueueMotion.NavigationEasing),
+                        ),
+                        exit = fadeOut(tween(120)) + scaleOut(
+                            targetScale = 0.85f,
+                            animationSpec = tween(120),
+                        ),
+                    ) {
+                        Surface(
+                            onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                            shape = RoundedCornerShape(14.dp),
+                            color = vivid.copy(alpha = 0.16f).compositeOver(panelColor),
+                            contentColor = ink,
+                            shadowElevation = 4.dp,
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.KeyboardArrowUp,
+                                    contentDescription = "Пролистать очередь к началу",
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Text(
+                                    text = "К началу",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontFamily = LocalAppFontFamily.current,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.musicplayer.service
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -8,6 +9,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.AudioManager
@@ -21,8 +23,10 @@ import android.os.SystemClock
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
+import android.view.KeyEvent
 import androidx.core.app.NotificationCompat
 import androidx.media.app.NotificationCompat.MediaStyle
+import androidx.media.session.MediaButtonReceiver
 import com.musicplayer.MainActivity
 import com.musicplayer.R
 import com.musicplayer.utils.SongCoverResolver
@@ -176,6 +180,38 @@ class MusicService : Service() {
 
     override fun onBind(intent: Intent): IBinder = binder
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Медиакнопки наушников/Bluetooth, приходящие через manifest-приёмник
+        // androidx.media.session.MediaButtonReceiver, долетают сюда как ACTION_MEDIA_BUTTON.
+        if (intent?.action == Intent.ACTION_MEDIA_BUTTON) {
+            val key = MediaButtonReceiver.handleIntent(mediaSession, intent)
+            if (key != null) {
+                when (key.keyCode) {
+                    KeyEvent.KEYCODE_MEDIA_PLAY     -> onPlayCommand?.invoke()
+                    KeyEvent.KEYCODE_MEDIA_PAUSE    -> onPauseCommand?.invoke()
+                    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+                    KeyEvent.KEYCODE_HEADSETHOOK    -> onPlayPause?.invoke()
+                    KeyEvent.KEYCODE_MEDIA_NEXT     -> onNext?.invoke()
+                    KeyEvent.KEYCODE_MEDIA_PREVIOUS -> onPrev?.invoke()
+                    KeyEvent.KEYCODE_MEDIA_STOP     -> onStop?.invoke() ?: stopForegroundPlayback()
+                }
+            }
+        }
+        if (intent == null) {
+            // Системный рестарт после выгрузки процесса (START_STICKY): воспроизведение
+            // восстановить нельзя — плееры и состояние живут в UI-слое. Убираем пустую
+            // шторку, чтобы вместо неё не висела мёртвая карточка без длительности.
+            if (lastTitle.isBlank()) {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                return START_NOT_STICKY
+            }
+        }
+        // START_STICKY: если система всё же убьёт процесс — сервис перезапустится,
+        // а не исчезнет из шторки навсегда вместе с приложением.
+        return START_STICKY
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         mediaSession.release()
@@ -218,13 +254,28 @@ class MusicService : Service() {
         lastTitle = title
         lastArtist = artist
         lastIsPlaying = isPlaying
-        lastDurationMs = durationMs.coerceAtLeast(0L)
+        // Нулевую длительность НЕ сохраняем: после паузы/остановки плеер мог отдать 0,
+        // а перезапись прошлого значения ломала шторку (00:00 вместо длительности трека).
+        if (durationMs > 0L) {
+            lastDurationMs = durationMs
+        }
         lastPositionMs = positionMs.coerceAtLeast(0L)
         lastPlaybackSpeed = playbackSpeed
 
+        // Сессия могла быть погашена после полного стопа (stopForegroundPlayback) —
+        // оживляем её, иначе шторка появится с неработающими кнопками.
+        if (!mediaSession.isActive) {
+            mediaSession.isActive = true
+        }
+
         if (lastAlbumArtUri != albumArtUri) {
             lastAlbumArtUri = albumArtUri
-            lastAlbumArtBitmap = loadNotificationBitmap(albumArtUri)
+            // Декод обложки больше НЕ на главном потоке: раньше BitmapFactory синхронно
+            // читал MediaStore в updateNotification — это давало микро-фриз при смене
+            // трека (в том числе в начале кроссфейда). Сначала шлём шторку без обложки,
+            // затем перерисовываем, когда битмап готов.
+            lastAlbumArtBitmap = null
+            loadAlbumArtAsync(albumArtUri)
         }
 
         updateSessionMetadata()
@@ -244,7 +295,10 @@ class MusicService : Service() {
         playbackSpeed: Float = 1f
     ) {
         lastPositionMs = positionMs.coerceAtLeast(0L)
-        lastDurationMs = durationMs.coerceAtLeast(0L)
+        // Длительность с нулём не перезаписываем (см. updateNotification).
+        if (durationMs > 0L) {
+            lastDurationMs = durationMs
+        }
         lastIsPlaying = isPlaying
         lastPlaybackSpeed = playbackSpeed
 
@@ -289,23 +343,31 @@ class MusicService : Service() {
     }
 
     private fun pushNotification() {
+        if (lastTitle.isBlank()) return
         val notification = buildNotification(lastTitle, lastArtist, lastIsPlaying)
         val nm = getSystemService(NotificationManager::class.java)
-        if (lastIsPlaying) {
-            if (!isForegroundStarted) {
-                startForeground(NOTIFICATION_ID, notification)
-                isForegroundStarted = true
-            } else {
-                nm.notify(NOTIFICATION_ID, notification)
-            }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            if (isForegroundStarted) {
-                stopForeground(STOP_FOREGROUND_DETACH)
-                isForegroundStarted = false
-            }
-            nm.notify(NOTIFICATION_ID, notification)
+        // ВАЖНО: держим сервис foreground и НА ПАУЗЕ. Прежний код делал
+        // stopForeground(DETACH) при паузе: сервис превращался в фоновый и Android
+        // убивал процесс через пару минут простоя — уведомление исчезало, а
+        // «откреплённая» шторка оставалась мёртвой (00:00, нерабочие кнопки).
+        // Foreground-сервис с mediaPlayback жив, пока играет или стоит на паузе.
+        if (!isForegroundStarted) {
+            startForegroundWithPlaybackType(notification)
+            isForegroundStarted = true
         } else {
             nm.notify(NOTIFICATION_ID, notification)
+        }
+    }
+
+    private fun startForegroundWithPlaybackType(notification: Notification) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
         }
     }
 
@@ -314,12 +376,30 @@ class MusicService : Service() {
         lastArtist = artist
         lastIsPlaying = true
         isForegroundStarted = true
-        startForeground(NOTIFICATION_ID, buildNotification(title, artist, true))
+        startForegroundWithPlaybackType(buildNotification(title, artist, true))
     }
 
     fun stopForegroundPlayback() {
         isForegroundStarted = false
         stopForeground(STOP_FOREGROUND_REMOVE)
+        // На случай, если уведомление уже было «откреплено» прежней версией приложения.
+        getSystemService(NotificationManager::class.java).cancel(NOTIFICATION_ID)
+        // Гасим сессию: иначе система продолжает показывать медиа-карточку с последними
+        // метаданными — без длительности и с нерабочими кнопками (после выгрузки процесса).
+        try {
+            mediaSession.setPlaybackState(
+                PlaybackStateCompat.Builder()
+                    .setActions(0)
+                    .setState(
+                        PlaybackStateCompat.STATE_STOPPED,
+                        0L,
+                        0f,
+                        SystemClock.elapsedRealtime()
+                    )
+                    .build()
+            )
+            mediaSession.isActive = false
+        } catch (_: Exception) {}
     }
 
     // ── Notification builder ──────────────────────────────────────────────────
@@ -365,6 +445,22 @@ class MusicService : Service() {
                 .setShowActionsInCompactView(0, 1, 2)
         )
         .build()
+
+    /** Декод обложки вне главного потока; по готовности перерисовываем шторку. */
+    private fun loadAlbumArtAsync(uri: Uri?) {
+        val appContext = applicationContext
+        thread(name = "cover-load", isDaemon = true) {
+            val bmp = try { loadNotificationBitmap(uri) } catch (_: Exception) { null }
+            if (bmp == null) return@thread
+            Handler(Looper.getMainLooper()).post {
+                if (lastAlbumArtUri == uri) {
+                    lastAlbumArtBitmap = bmp
+                    updateSessionMetadata()
+                    if (lastTitle.isNotBlank()) pushNotification()
+                }
+            }
+        }
+    }
 
     private fun loadNotificationBitmap(uri: Uri?): Bitmap? {
         if (uri == null) return null

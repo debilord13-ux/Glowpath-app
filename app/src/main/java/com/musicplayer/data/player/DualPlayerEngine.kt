@@ -46,6 +46,14 @@ class DualPlayerEngine(private val context: Context) {
     private var playbackSpeed: Float = 1f
     private var nextPrepared: Boolean = false
 
+    /**
+     * Огибающая громкости мастера (0..1) поверх пользовательской громкости.
+     * Служит для быстрых РУЧНЫХ фейдов (затухание старой песни перед переключением
+     * и плавный старт новой): ViewModel двигает только её, не трогая userVolume/duck.
+     * Во время кроссфейда не применяется — там громкостью рулит сам переход.
+     */
+    private var masterEnvelope: Float = 1f
+
     /** Приглушение аудиофокусом (гс/уведомления) — общий множитель на оба плеера,
      *  чтобы duck работал и во время кроссфейда. */
     private var duckFactor: Float = 1f
@@ -58,8 +66,19 @@ class DualPlayerEngine(private val context: Context) {
         playerB = null
         nextPrepared = false
         playerA = player
-        applyVolume(player, 1f)
+        applyVolume(player, masterEnvelope)
     }
+
+    /** Мгновенно ставит огибающую мастера (0..1) — без изменения пользовательской громкости. */
+    fun setMasterEnvelope(envelope: Float) {
+        masterEnvelope = envelope.coerceIn(0f, 1f)
+        if (!transitionRunning) {
+            playerA?.let { applyVolume(it, masterEnvelope) }
+        }
+    }
+
+    /** Текущая огибающая мастера (чтобы фейд начинался от фактической громкости, а не с 1). */
+    fun currentMasterEnvelope(): Float = masterEnvelope
 
     fun setUserVolume(volume: Float) {
         setUserVolume(volume, volume)
@@ -69,7 +88,7 @@ class DualPlayerEngine(private val context: Context) {
         userVolumeL = left.coerceIn(0f, 1f)
         userVolumeR = right.coerceIn(0f, 1f)
         if (!transitionRunning) {
-            playerA?.let { applyVolume(it, 1f) }
+            playerA?.let { applyVolume(it, masterEnvelope) }
         }
     }
 
@@ -77,7 +96,7 @@ class DualPlayerEngine(private val context: Context) {
     fun setDuckFactor(factor: Float) {
         duckFactor = factor.coerceIn(0f, 1f)
         if (!transitionRunning) {
-            playerA?.let { applyVolume(it, 1f) }
+            playerA?.let { applyVolume(it, masterEnvelope) }
         }
     }
 
@@ -129,7 +148,11 @@ class DualPlayerEngine(private val context: Context) {
                 releaseQuiet(mp)
                 true
             }
-            player.setDataSource(context, uri)
+            // Если трек уже докопирован TrackPreloader'ом в файловый кэш — готовимся
+            // по локальному файлу: prepareAsync по content:// может занять секунды,
+            // что и было причиной «мини-зависания» в момент перехода.
+            val preparedUri = TrackPreloader.readyCachedFile(context, uri) ?: uri
+            player.setDataSource(context, preparedUri)
             playerB = player
             player.prepareAsync()
         } catch (e: Exception) {
@@ -154,7 +177,7 @@ class DualPlayerEngine(private val context: Context) {
         nextPrepared = false
         releaseQuiet(playerB)
         playerB = null
-        playerA?.let { applyVolume(it, 1f) }
+        playerA?.let { applyVolume(it, masterEnvelope) }
     }
 
     fun notifyMasterReleased() {
@@ -217,6 +240,7 @@ class DualPlayerEngine(private val context: Context) {
             // Gapless cut: следующий уже играет, старый глушим сразу.
             playerA = nextPlayer
             playerB = outgoing
+            masterEnvelope = 1f
             applyVolume(nextPlayer, 1f)
             onPlayerSwapped?.invoke(nextPlayer)
             onSwapReady?.invoke()
@@ -258,6 +282,7 @@ class DualPlayerEngine(private val context: Context) {
             delay(stepMs)
         }
 
+        masterEnvelope = 1f
         applyVolume(playerA, 1f)
         releaseQuiet(outgoing)
         playerB = null

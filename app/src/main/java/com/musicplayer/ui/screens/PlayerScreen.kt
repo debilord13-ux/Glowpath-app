@@ -98,6 +98,9 @@ fun PlayerScreen(
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
     val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    // «Широкий» layout: ландшафт ИЛИ планшет (ширина ≥600dp — порог Material).
+    // В нём тап по краям вокруг раскрытой очереди закрывает её.
+    val wideLayout = isLandscape || LocalConfiguration.current.screenWidthDp >= 600
 
     val song            by viewModel.currentSong.collectAsState()
     val isPlaying       by viewModel.isPlaying.collectAsState()
@@ -275,6 +278,7 @@ fun PlayerScreen(
                     gradientColors = artworkGradientColors,
                     onQueueTopChanged = { queueTop = it },
                     onQueueExpandedChanged = { queueExpanded = it },
+                    tapOutsideToDismiss = wideLayout,
                 ) { _ ->
                     LandscapePlayerContent(
                         song!!, isPlaying, duration, settings, isFavourite, 1f,
@@ -292,6 +296,7 @@ fun PlayerScreen(
                     gradientColors = artworkGradientColors,
                     onQueueTopChanged = { queueTop = it },
                     onQueueExpandedChanged = { queueExpanded = it },
+                    tapOutsideToDismiss = wideLayout,
                 ) { queueSlots ->
                     PortraitPlayerContent(
                         song!!, isPlaying, duration, settings, isFavourite, 1f,

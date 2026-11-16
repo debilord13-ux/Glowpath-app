@@ -27,12 +27,16 @@ enum class Curve {
  *   смена без фейда, но со стартом следующего трека встык (без паузы).
  * @param curveIn кривая нарастания нового трека
  * @param curveOut кривая затухания текущего трека
+ *
+ * Кривые по умолчанию — LINEAR: автопереход идёт линейно и заканчивается резко,
+ * без «затухающей» асимметрии EQUAL_POWER (у него сумма громкостей двух разных
+ * треков в середине кроссфейда даёт слышимый горб, а хвост тянется вяло).
  */
 data class TransitionSettings(
     val mode: TransitionMode = TransitionMode.NONE,
     val durationMs: Int = 2000,
-    val curveIn: Curve = Curve.EQUAL_POWER,
-    val curveOut: Curve = Curve.EQUAL_POWER
+    val curveIn: Curve = Curve.LINEAR,
+    val curveOut: Curve = Curve.LINEAR
 ) {
     val isEnabled: Boolean get() = mode == TransitionMode.OVERLAP
 

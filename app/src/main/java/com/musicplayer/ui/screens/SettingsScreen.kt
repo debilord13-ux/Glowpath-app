@@ -67,6 +67,32 @@ private data class ThemeGridEntry(
     val swatches: List<Color>
 )
 
+/** Исключён ли плеер из оптимизации батареи (иначе MIUI/агрессивные оболочки его выгружают). */
+private fun isBatteryOptimizationIgnored(context: android.content.Context): Boolean {
+    val pm = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+    return pm?.isIgnoringBatteryOptimizations(context.packageName) ?: true
+}
+
+/** Просит систему исключить приложение из оптимизации батареи (диалог/страница настроек). */
+private fun requestIgnoreBatteryOptimizations(context: android.content.Context) {
+    try {
+        val intent = android.content.Intent(
+            android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+            android.net.Uri.parse("package:${context.packageName}")
+        )
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+    } catch (_: Exception) {
+        // Часть прошивок не поддерживает прямой диалог — открываем общий список.
+        try {
+            context.startActivity(
+                android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } catch (_: Exception) {}
+    }
+}
+
 private fun themeGridEntry(
     theme: AppTheme,
     label: String
@@ -134,6 +160,8 @@ fun SettingsScreen(
         else -> "Таймер сна, затухание и действие по завершении"
     }
     val appVersion = remember(context) { readAppBuildInfo(context).versionName }
+    // Состояние оптимизации батареи — для пункта «Разрешить работу в фоне».
+    val batteryRestricted = remember(context) { !isBatteryOptimizationIgnored(context) }
     val openFontPicker = onFontClick
     val openAbout = onAboutClick
 
@@ -218,7 +246,7 @@ fun SettingsScreen(
                     onSort = { showSortSheet = true },
                     onWavySeekBar = { viewModel.updateSettings(settings.copy(useWavySeekBar = !settings.useWavySeekBar)) },
                     onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) },
-                    onColoredQueuePanel = { viewModel.updateSettings(settings.copy(coloredQueuePanel = !settings.coloredQueuePanel)) }
+                    onManualSwitchAnimation = { viewModel.updateSettings(settings.copy(manualSwitchAnimation = !settings.manualSwitchAnimation)) }
                 )
             }
 
@@ -310,17 +338,17 @@ fun SettingsScreen(
                 )
                 SettingsGroupDivider()
                 SettingsSwitchItem(
-                    icon = Icons.Rounded.QueueMusic,
+                    icon = Icons.Rounded.Animation,
                     iconBg = MaterialTheme.colorScheme.secondary,
-                    title = "Панель очереди в цвет трека",
-                    subtitle = if (settings.coloredQueuePanel) {
-                        "Нижняя панель «Очередь» подкрашивается в оттенок обложки"
+                    title = "Плавная смена вручную",
+                    subtitle = if (settings.manualSwitchAnimation) {
+                        "При ручном переключении трек быстро затухает, а новый плавно нарастает после него"
                     } else {
-                        "Панель очереди использует цвета темы"
+                        "При ручном переключении резкая остановка песни и резкий старт следующей"
                     },
-                    checked = settings.coloredQueuePanel,
+                    checked = settings.manualSwitchAnimation,
                     onCheckedChange = {
-                        viewModel.updateSettings(settings.copy(coloredQueuePanel = it))
+                        viewModel.updateSettings(settings.copy(manualSwitchAnimation = it))
                     }
                 )
                 SettingsGroupDivider()
@@ -357,6 +385,18 @@ fun SettingsScreen(
                     title = "Статистика",
                     subtitle = "История прослушивания и показатели библиотеки",
                     onClick = onStatsClick
+                )
+                SettingsGroupDivider()
+                SettingsNavigationItem(
+                    icon = Icons.Rounded.BatterySaver,
+                    iconBg = MaterialTheme.colorScheme.primary,
+                    title = if (batteryRestricted) "Разрешить работу в фоне" else "Фон: без ограничений",
+                    subtitle = if (batteryRestricted) {
+                        "Исключить плеер из оптимизации батареи, чтобы система не выгружала его из памяти"
+                    } else {
+                        "Плеер исключён из оптимизации батареи — шторка и воспроизведение стабильны"
+                    },
+                    onClick = { requestIgnoreBatteryOptimizations(context) }
                 )
                 SettingsGroupDivider()
                 SettingsNavigationItem(
@@ -598,7 +638,7 @@ private fun SettingsSearchResults(
     onSort: () -> Unit,
     onWavySeekBar: () -> Unit,
     onColoredButtons: () -> Unit,
-    onColoredQueuePanel: () -> Unit
+    onManualSwitchAnimation: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val entries = listOf(
@@ -612,7 +652,7 @@ private fun SettingsSearchResults(
         Triple("Сортировка", "Название, исполнитель, альбом, длительность и дата добавления", Icons.Rounded.Sort) to onSort,
         Triple("Волнистый ползунок", "Анимированный seek bar в плеере", Icons.Rounded.ShowChart) to onWavySeekBar,
         Triple("Кнопки в цвет трека", "Раскраска кнопок плеера под обложку", Icons.Rounded.Colorize) to onColoredButtons,
-        Triple("Панель очереди", "Подкраска панели очереди под цвет обложки", Icons.Rounded.QueueMusic) to onColoredQueuePanel,
+        Triple("Плавная смена вручную", "Анимация при ручном переключении треков", Icons.Rounded.Animation) to onManualSwitchAnimation,
         Triple("Статистика", "История прослушивания", Icons.Rounded.BarChart) to onStats,
         Triple("О приложении", "Glowpath и версия приложения", Icons.Rounded.Info) to onAbout
     )

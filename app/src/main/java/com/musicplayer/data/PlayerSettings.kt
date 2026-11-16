@@ -151,7 +151,12 @@ data class PlayerSettings(
     val pauseOnHeadphoneDisconnect: Boolean = true,  // пауза при отключении наушников
     val resumeOnHeadphoneConnect: Boolean = false,  // продолжить при подключении
     val showHiddenTracks: Boolean = false,  // показывать скрытые треки
-    val geniusApiEnabled: Boolean = true  // использовать Genius как fallback для текстов
+    val geniusApiEnabled: Boolean = true,  // использовать Genius как fallback для текстов
+    // Анимация перехода при РУЧНОМ переключении (кнопка next/prev, тап по треку, свайп обложки).
+    // false — резкая остановка песни и резкий старт следующей (как было всегда).
+    // true  — песня быстро и линейно затухает, а следующая появляется в том же стиле,
+    //         но ТОЛЬКО после того, как предыдущая закончила свою анимацию (последовательно).
+    val manualSwitchAnimation: Boolean = false
 )
 
 /**
