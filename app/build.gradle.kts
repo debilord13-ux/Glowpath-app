@@ -12,8 +12,8 @@ android {
         applicationId = "com.musicplayer"
         minSdk = 26 // Как ты просил изначально
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.4.1-sort-sheet"
+        versionCode = 14
+        versionName = "1.4.2-ci-stable"
 
         // Embed the identity of this APK, not the latest build available online.
         val revision = providers.environmentVariable("GITHUB_SHA").orNull.orEmpty()
@@ -96,6 +96,43 @@ android {
     }
 }
 
+// ── SDK-джарки Robolectric: через Gradle, НЕ через скачивание в момент тестов ──
+// По умолчанию Robolectric качает android-all с Maven Central ПРЯМО ВО ВРЕМЯ
+// запуска тестов. GitHub-раннер каждый раз свежий (~/.m2 не сохраняется между
+// прогонами), и любой сбой или лимит Maven Central (HTTP 429) мгновенно ронял
+// ВСЕ тесты сразу с IOException из MavenArtifactFetcher — код приложения и сами
+// тесты были ни при чём. Теперь SDK-джарки — обычные Gradle-зависимости: их
+// качает Gradle (ci/gradle-retry.sh повторяет при сетевых сбоях, setup-gradle
+// кэширует ~/.gradle между прогонами), а Robolectric получает их локально из
+// build/robolectric-sdk-jars через robolectric.dependency.dir — при тестах
+// сеть не используется вовсе. Имена файлов Gradle-кэша совпадают с ожидаемыми
+// LocalDependencyResolver: android-all-instrumented-<версия>.jar.
+// Версии соответствуют маппингу Robolectric 4.14.1 (DefaultSdkProvider):
+//   API 26 -> 8.0.0_r4-robolectric-r1-i7, API 34 -> 14-robolectric-10818077-i7.
+val robolectricSdkJars = configurations.create("robolectricSdkJars") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+    isVisible = false
+}
+
+val robolectricSdkDir = layout.buildDirectory.dir("robolectric-sdk-jars")
+
+val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars", org.gradle.api.tasks.Copy::class.java) {
+    description = "Выкладывает android-all джарки для Robolectric в build/robolectric-sdk-jars"
+    from(robolectricSdkJars)
+    into(robolectricSdkDir)
+}
+
+tasks.configureEach {
+    if (this is org.gradle.api.tasks.testing.Test) {
+        dependsOn(prepareRobolectricSdkJars)
+        // Местная папка с джарками отключает сетевой Maven-резолвер Robolectric
+        // (LegacyDependencyResolver проверяет её ДО похода в Maven Central).
+        systemProperty("robolectric.dependency.dir", robolectricSdkDir.get().asFile.absolutePath)
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
@@ -148,4 +185,9 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")
+
+    // android-all SDK для тестов Robolectric (SDK 26 и 34) — см. блок выше:
+    // доставляются Gradle'ом с ретраями и кэшируются между прогонами CI.
+    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:8.0.0_r4-robolectric-r1-i7")
+    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
 }
