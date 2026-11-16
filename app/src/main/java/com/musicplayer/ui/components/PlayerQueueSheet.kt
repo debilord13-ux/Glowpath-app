@@ -10,12 +10,12 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
+import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode as AnimationRepeatMode
-import androidx.compose.animation.core.SizeTransform
 import androidx.compose.animation.core.StartOffset
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
@@ -55,8 +55,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
@@ -95,7 +95,6 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -830,10 +829,11 @@ private fun PlayerQueueSheetContent(
     val colors = MaterialTheme.colorScheme
     // Состояние скролла ЖИВЁТ ВЫШЕ переключателя «Очередь/Таймер»: AnimatedContent
     // уничтожал LazyColumn при уходе на таймер, и позиция списка сбрасывалась.
-    // Плюс rememberSaveable — позиция переживает пересоздание композиции.
-    val listState = rememberSaveable(saver = LazyListState.Saver) {
-        LazyListState(initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0))
-    }
+    // rememberLazyListState внутри использует rememberSaveable + LazyListState.Saver,
+    // поэтому позиция переживает пересоздание композиции.
+    val listState = rememberLazyListState(
+        initialFirstVisibleItemIndex = currentIndex.coerceAtLeast(0),
+    )
     val scope = rememberCoroutineScope()
     // Кнопка «вверх» видна, когда список прокручен хоть чуть-чуть вниз от начала.
     val showScrollTop by remember(listState) {
@@ -1061,7 +1061,9 @@ private fun PlayerQueueSheetContent(
         }
                     // Кнопка «К началу»: плавно появляется, когда список прокручен вниз,
                     // и плавно же скроллит к первому треку — без резких прыжков.
-                    AnimatedVisibility(
+                    // Явный receiver: внутри AnimatedContent K2 запрещает вызов
+                    // ColumnScope.AnimatedVisibility через неявный receiver.
+                    this@Column.AnimatedVisibility(
                         visible = showScrollTop,
                         modifier = Modifier.align(Alignment.TopCenter),
                         enter = fadeIn(tween(160)) + scaleIn(
