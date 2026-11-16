@@ -245,8 +245,7 @@ fun SettingsScreen(
                     onAbout = openAbout,
                     onSort = { showSortSheet = true },
                     onWavySeekBar = { viewModel.updateSettings(settings.copy(useWavySeekBar = !settings.useWavySeekBar)) },
-                    onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) },
-                    onManualSwitchAnimation = { viewModel.updateSettings(settings.copy(manualSwitchAnimation = !settings.manualSwitchAnimation)) }
+                    onColoredButtons = { viewModel.updateSettings(settings.copy(coloredPlayerButtons = !settings.coloredPlayerButtons)) }
                 )
             }
 
@@ -334,21 +333,6 @@ fun SettingsScreen(
                     checked = settings.coloredPlayerButtons,
                     onCheckedChange = {
                         viewModel.updateSettings(settings.copy(coloredPlayerButtons = it))
-                    }
-                )
-                SettingsGroupDivider()
-                SettingsSwitchItem(
-                    icon = Icons.Rounded.Animation,
-                    iconBg = MaterialTheme.colorScheme.secondary,
-                    title = "Плавная смена вручную",
-                    subtitle = if (settings.manualSwitchAnimation) {
-                        "При ручном переключении трек быстро затухает, а новый плавно нарастает после него"
-                    } else {
-                        "При ручном переключении резкая остановка песни и резкий старт следующей"
-                    },
-                    checked = settings.manualSwitchAnimation,
-                    onCheckedChange = {
-                        viewModel.updateSettings(settings.copy(manualSwitchAnimation = it))
                     }
                 )
                 SettingsGroupDivider()
@@ -637,8 +621,7 @@ private fun SettingsSearchResults(
     onAbout: () -> Unit,
     onSort: () -> Unit,
     onWavySeekBar: () -> Unit,
-    onColoredButtons: () -> Unit,
-    onManualSwitchAnimation: () -> Unit
+    onColoredButtons: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val entries = listOf(
@@ -652,7 +635,7 @@ private fun SettingsSearchResults(
         Triple("Сортировка", "Название, исполнитель, альбом, длительность и дата добавления", Icons.Rounded.Sort) to onSort,
         Triple("Волнистый ползунок", "Анимированный seek bar в плеере", Icons.Rounded.ShowChart) to onWavySeekBar,
         Triple("Кнопки в цвет трека", "Раскраска кнопок плеера под обложку", Icons.Rounded.Colorize) to onColoredButtons,
-        Triple("Плавная смена вручную", "Анимация при ручном переключении треков", Icons.Rounded.Animation) to onManualSwitchAnimation,
+        Triple("Плавная смена вручную", "Анимация при ручном переключении треков — экран «Переходы»", Icons.Rounded.Animation) to onTransitions,
         Triple("Статистика", "История прослушивания", Icons.Rounded.BarChart) to onStats,
         Triple("О приложении", "Glowpath и версия приложения", Icons.Rounded.Info) to onAbout
     )

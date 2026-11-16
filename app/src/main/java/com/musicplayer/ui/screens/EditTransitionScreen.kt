@@ -32,10 +32,10 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Animation
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.GraphicEq
-import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.Tune
@@ -94,6 +94,10 @@ private val DurationPresetsMs = listOf(0, 500, 1000, 2000, 3000, 5000, 8000, 120
 private const val MaxDurationMs = 12_000
 private const val DurationStepMs = 500
 
+/** Границы слайдера анимации РУЧНОГО переключения треков (мс). */
+private const val MinManualFadeMs = 200
+private const val MaxManualFadeMs = 1000
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun EditTransitionScreen(
@@ -101,6 +105,7 @@ fun EditTransitionScreen(
     musicViewModel: MusicViewModel
 ) {
     val savedSettings by musicViewModel.transitionSettings.collectAsState()
+    val playerSettings by musicViewModel.settings.collectAsState()
     var draft by remember { mutableStateOf(savedSettings) }
     var savedFlash by remember { mutableStateOf(false) }
     val font = LocalAppFontFamily.current
@@ -213,14 +218,24 @@ fun EditTransitionScreen(
                         onCurveIn = { draft = draft.copy(curveIn = it) },
                         onCurveOut = { draft = draft.copy(curveOut = it) }
                     )
-
-                    HowItWorksCard(durationMs = draft.durationMs)
                 }
             }
 
             if (!enabled) {
                 DisabledHintCard()
             }
+
+            ManualSwitchCard(
+                animationEnabled = playerSettings.manualSwitchAnimation,
+                fadeMs = playerSettings.manualSwitchFadeMs,
+                onToggle = { on ->
+                    haptic.performHapticFeedback(HapticFeedbackType.ToggleOn)
+                    musicViewModel.updateSettings(playerSettings.copy(manualSwitchAnimation = on))
+                },
+                onFadeChange = { ms ->
+                    musicViewModel.updateSettings(playerSettings.copy(manualSwitchFadeMs = ms))
+                }
+            )
         }
     }
 }
@@ -718,36 +733,106 @@ private fun MiniCurveIcon(curve: Curve, outgoing: Boolean, color: Color) {
 }
 
 @Composable
-private fun HowItWorksCard(durationMs: Int) {
+private fun ManualSwitchCard(
+    animationEnabled: Boolean,
+    fadeMs: Int,
+    onToggle: (Boolean) -> Unit,
+    onFadeChange: (Int) -> Unit
+) {
     val colors = MaterialTheme.colorScheme
     val font = LocalAppFontFamily.current
-    val body = if (durationMs == 0) {
-        "Следующий трек заранее буферизуется и стартует ровно в конце текущего — без паузы и без наложения."
-    } else {
-        "За ${formatSeconds(durationMs / 1000f)} с до конца текущий трек затухает, а следующий уже нарастает. Оба звучат вместе ровно столько, сколько выставлено на слайдере."
-    }
+    val haptic = LocalHapticFeedback.current
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         color = colors.surfaceContainerLow,
-        shape = RoundedCornerShape(24.dp)
+        shape = RoundedCornerShape(28.dp)
     ) {
-        Row(
-            modifier = Modifier.padding(16.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        Column(
+            modifier = Modifier.padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Icon(
-                Icons.Rounded.Info,
-                contentDescription = null,
-                tint = colors.primary,
-                modifier = Modifier.padding(top = 2.dp)
-            )
-            Text(
-                text = body,
-                style = MaterialTheme.typography.bodyMedium,
-                fontFamily = font,
-                color = colors.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Rounded.Animation,
+                    contentDescription = null,
+                    tint = colors.secondary
+                )
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Плавная смена вручную",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontFamily = font,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = if (animationEnabled) {
+                            "Затухание старого трека, затем нарастание нового"
+                        } else {
+                            "Резкая остановка и резкий старт"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        fontFamily = font,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+                Switch(
+                    checked = animationEnabled,
+                    onCheckedChange = onToggle,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = colors.onPrimary,
+                        checkedTrackColor = colors.primary,
+                        uncheckedThumbColor = colors.outline,
+                        uncheckedTrackColor = colors.surfaceContainerHighest
+                    )
+                )
+            }
+
+            AnimatedVisibility(visible = animationEnabled) {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.Bottom,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = formatSeconds(fadeMs.coerceIn(MinManualFadeMs, MaxManualFadeMs) / 1000f),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontFamily = font,
+                            fontWeight = FontWeight.Bold,
+                            color = colors.primary
+                        )
+                        Text(
+                            text = "затухание и нарастание",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = font,
+                            color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 4.dp)
+                        )
+                    }
+                    Slider(
+                        value = fadeMs.coerceIn(MinManualFadeMs, MaxManualFadeMs) / 1000f,
+                        onValueChange = { value ->
+                            val ms = ((value * 10f).roundToInt() * 100)
+                                .coerceIn(MinManualFadeMs, MaxManualFadeMs)
+                            if (ms != fadeMs) {
+                                haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            }
+                            onFadeChange(ms)
+                        },
+                        valueRange = MinManualFadeMs / 1000f..MaxManualFadeMs / 1000f,
+                        steps = (MaxManualFadeMs - MinManualFadeMs) / 100 - 1,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = SliderDefaults.colors(
+                            thumbColor = colors.primary,
+                            activeTrackColor = colors.primary,
+                            inactiveTrackColor = colors.surfaceContainerHighest,
+                            activeTickColor = Color.Transparent,
+                            inactiveTickColor = Color.Transparent
+                        )
+                    )
+                }
+            }
         }
     }
 }

@@ -173,6 +173,7 @@ class PreferencesManager(context: Context) {
             putBoolean("genius_api_enabled", settings.geniusApiEnabled)
             // Плавная анимация при РУЧНОМ переключении трека
             putBoolean("manual_switch_animation", settings.manualSwitchAnimation)
+            putInt("manual_switch_fade_ms", settings.manualSwitchFadeMs)
         }.apply()
     }
 
@@ -300,7 +301,8 @@ class PreferencesManager(context: Context) {
             resumeOnHeadphoneConnect = prefs.getBoolean("resume_on_headphone_connect", false),
             showHiddenTracks = prefs.getBoolean("show_hidden_tracks", false),
             geniusApiEnabled = prefs.getBoolean("genius_api_enabled", true),
-            manualSwitchAnimation = prefs.getBoolean("manual_switch_animation", false)
+            manualSwitchAnimation = prefs.getBoolean("manual_switch_animation", false),
+            manualSwitchFadeMs = prefs.getInt("manual_switch_fade_ms", 500).coerceIn(200, 1000)
         )
     }
 

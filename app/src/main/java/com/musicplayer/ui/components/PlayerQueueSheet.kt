@@ -545,7 +545,12 @@ fun PlayerQueueHost(
                 TextButton(
                     enabled = playlistName.isNotBlank(),
                     onClick = {
-                        val created = viewModel.createUserAlbum(playlistName, queue.songs.map { it.id })
+                        // Сохраняем текущий и будущие треки: прослушанная история
+                        // в очереди показывается, но в плейлист попадать не должна.
+                        val created = viewModel.createUserAlbum(
+                            playlistName,
+                            queue.songs.drop(queue.currentIndex.coerceAtLeast(0)).map { it.id }
+                        )
                         showSaveDialog = false
                         Toast.makeText(
                             context,
