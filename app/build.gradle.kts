@@ -12,8 +12,8 @@ android {
         applicationId = "com.musicplayer"
         minSdk = 26 // Как ты просил изначально
         targetSdk = 36
-        versionCode = 12
-        versionName = "1.4-fixes"
+        versionCode = 13
+        versionName = "1.4.1-sort-sheet"
 
         // Embed the identity of this APK, not the latest build available online.
         val revision = providers.environmentVariable("GITHUB_SHA").orNull.orEmpty()

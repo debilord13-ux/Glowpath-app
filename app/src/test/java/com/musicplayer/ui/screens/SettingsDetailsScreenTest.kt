@@ -95,11 +95,18 @@ class SettingsDetailsScreenTest {
         showSort()
         SortOrder.entries.forEach { order ->
             compose.onNodeWithText("Сортировка").performClick()
-            compose.onNodeWithTag("library_sort_${order.name}").performScrollTo().performClick()
+            // performScrollToNode по контейнеру: работает даже если опция сейчас
+            // за пределами видимой части шторки (на маленьких экранах нижние
+            // пункты нужно прокрутить, прежде чем с ними можно взаимодействовать).
+            compose.onNodeWithTag("library_sort_options")
+                .performScrollToNode(hasTestTag("library_sort_${order.name}"))
+            compose.onNodeWithTag("library_sort_${order.name}").performClick()
             compose.onNodeWithTag("library_sort_options").assertDoesNotExist()
             compose.runOnIdle { assertEquals(order, selected) }
             compose.onNodeWithText("Сортировка").performClick()
-            compose.onNodeWithTag("library_sort_${order.name}").performScrollTo().assertIsSelected()
+            compose.onNodeWithTag("library_sort_options")
+                .performScrollToNode(hasTestTag("library_sort_${order.name}"))
+            compose.onNodeWithTag("library_sort_${order.name}").assertIsSelected()
             compose.onNodeWithContentDescription("Закрыть сортировку").performClick()
         }
         compose.runOnIdle { assertEquals(SortOrder.entries, changes) }
@@ -119,7 +126,9 @@ class SettingsDetailsScreenTest {
     @Test fun lastSortOptionIsReachableOnSmallScreensWithLargeText() {
         showSort(fontScale = 1.5f)
         compose.onNodeWithText("Сортировка").performClick()
-        compose.onNodeWithTag("library_sort_DATE_ADDED").performScrollTo().assertIsDisplayed().performClick()
+        compose.onNodeWithTag("library_sort_options")
+            .performScrollToNode(hasTestTag("library_sort_DATE_ADDED"))
+        compose.onNodeWithTag("library_sort_DATE_ADDED").assertIsDisplayed().performClick()
         compose.runOnIdle { assertEquals(SortOrder.DATE_ADDED, selected) }
     }
 

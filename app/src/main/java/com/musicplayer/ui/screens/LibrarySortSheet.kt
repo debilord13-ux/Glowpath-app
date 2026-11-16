@@ -2,12 +2,12 @@ package com.musicplayer.ui.screens
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
@@ -146,12 +146,20 @@ internal fun LibrarySortSheetContent(
             }
             IconButton(onClick = onClose, enabled = enabled) { Icon(Icons.Rounded.Close, "Закрыть сортировку") }
         }
-        LazyColumn(
-            modifier = Modifier.weight(1f, fill = false).selectableGroup().testTag("library_sort_options"),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
+        // Обычный Column со скроллом (а не LazyColumn): все пункты присутствуют
+        // в дереве семантики даже когда не видны — это важно и для доступности,
+        // и для UI-тестов: onNodeWithTag(...).performScrollTo() находит опцию,
+        // даже если она за пределами видимой части шторки.
+        Column(
+            modifier = Modifier
+                .weight(1f, fill = false)
+                .verticalScroll(rememberScrollState())
+                .selectableGroup()
+                .testTag("library_sort_options")
+                .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            items(librarySortOptions, key = { it.order.name }) { option ->
+            librarySortOptions.forEach { option ->
                 val selected = sortOrder == option.order
                 val container by animateColorAsState(
                     if (selected) colors.secondaryContainer else colors.surfaceContainer,
