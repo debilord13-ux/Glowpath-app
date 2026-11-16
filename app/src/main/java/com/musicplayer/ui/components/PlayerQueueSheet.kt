@@ -12,6 +12,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ContentTransform
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
@@ -30,6 +31,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -46,6 +48,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -79,23 +82,21 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Surface
-import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberBottomSheetScaffoldState
-import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,8 +120,11 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.awaitFirstDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
@@ -130,6 +134,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.musicplayer.data.RepeatMode
@@ -138,8 +143,10 @@ import com.musicplayer.ui.screens.formatSleepTimerDuration
 import com.musicplayer.ui.theme.LocalAppFontFamily
 import com.musicplayer.viewmodel.MusicViewModel
 import com.musicplayer.viewmodel.SleepTimerAction
+import kotlin.math.abs
 import kotlin.math.roundToInt
-import kotlinx.coroutines.delay
+import kotlin.math.sign
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 
 private val QueueTitleRowHeight = 48.dp
@@ -934,26 +941,6 @@ private fun PlayerQueueSheetContent(
                 },
             ) { index, item ->
                 key(identity) {
-                    var removalRequested by remember { mutableStateOf(false) }
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (value != SwipeToDismissBoxValue.Settled && !removalRequested) {
-                                removalRequested = true
-                                onRemoveAt(index)
-                            }
-                            true
-                        },
-                    )
-                    // Страховка от «красной плашки»: если удаление не применилось и
-                    // строка всё ещё в списке, через мгновение возвращаем её из
-                    // dismissed-состояния. Если строка реально удалилась — композиция
-                    // умрёт раньше, и этот эффект просто не успеет сработать.
-                    LaunchedEffect(removalRequested, queue.size) {
-                        if (!removalRequested) return@LaunchedEffect
-                        delay(600)
-                        try { dismissState.snapTo(SwipeToDismissBoxValue.Settled) } catch (_: Exception) {}
-                        removalRequested = false
-                    }
                     Box(
                         modifier = Modifier
                             .animateItem(
@@ -1017,28 +1004,11 @@ private fun PlayerQueueSheetContent(
                                 )
                             },
                     ) {
-                        SwipeToDismissBox(
-                            state = dismissState,
-                            enableDismissFromStartToEnd = canRemove,
-                            enableDismissFromEndToStart = canRemove,
-                            backgroundContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .background(colors.errorContainer),
-                                    contentAlignment = when (dismissState.dismissDirection) {
-                                        SwipeToDismissBoxValue.StartToEnd -> Alignment.CenterStart
-                                        else -> Alignment.CenterEnd
-                                    },
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Close,
-                                        contentDescription = null,
-                                        tint = colors.onErrorContainer,
-                                        modifier = Modifier.padding(horizontal = 24.dp),
-                                    )
-                                }
-                            },
+                        DirectionalSwipeDeleteRow(
+                            enabled = canRemove,
+                            confirmColor = colors.errorContainer,
+                            confirmIconTint = colors.onErrorContainer,
+                            onConfirm = { onRemoveAt(index) },
                         ) {
                             PlayerQueueRow(
                                 display = display(item),
@@ -1135,6 +1105,137 @@ private fun PlayerQueueSheetContent(
                     }
                 }
             }
+        }
+    }
+}
+
+// ── Параметры направленного свайпа-удаления ──────────────────────────────────
+/** Жест считается горизонтальным, только если |dx| хотя бы в 1.3 раза больше |dy|. */
+private const val SWIPE_DIRECTION_BIAS = 1.3f
+/** Доля ширины строки, после которой свайп подтверждает удаление. */
+private const val SWIPE_COMMIT_FRACTION = 0.42f
+/** Минимальная доля ширины, при которой быстрый флинг всё равно удаляет. */
+private const val SWIPE_FLING_MIN_FRACTION = 0.16f
+/** Скорость флинга (dp/с), после которой короткий свайп считается удалением. */
+private const val SWIPE_FLING_DP_PER_S = 1100
+/** Возврат строки на место (мс). */
+private const val SWIPE_SETTLE_MS = 200
+
+/**
+ * Свайп-удаление с защитой от ложных срабатываний (замена SwipeToDismissBox).
+ *
+ * Жест признаётся горизонтальным ТОЛЬКО если по горизонтали ушло заметно больше,
+ * чем по вертикали (см. [SWIPE_DIRECTION_BIAS]). Обычная вертикальная прокрутка
+ * списка — даже с лёгким дрейфом пальца вбок — свайп не запускает: раньше достаточно
+ * было чуть повести пальцем по диагонали, и строка улетала в удаление вместо прокрутки.
+ * Пока жест не признан горизонтальным, обработчик НЕ потребляет события — скролл
+ * списка работает как обычно; после признания — события потребляются, и список
+ * на время свайпа замирает.
+ */
+@Composable
+private fun DirectionalSwipeDeleteRow(
+    enabled: Boolean,
+    confirmColor: Color,
+    confirmIconTint: Color,
+    onConfirm: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    var offsetX by remember { mutableFloatStateOf(0f) }
+    var settleJob by remember { mutableStateOf<Job?>(null) }
+    // Свежая ссылка на onConfirm внутри долгоживущего pointerInput(Unit):
+    // очередь может сдвинуться (история растёт), и старый индекс удалил бы чужую строку.
+    val currentOnConfirm by rememberUpdatedState(onConfirm)
+
+    Box(modifier = Modifier.fillMaxWidth()) {
+        // Красный фон с иконкой — проявляется под строкой по мере свайпа.
+        Box(
+            modifier = Modifier
+                .matchParentSize()
+                .background(confirmColor),
+            contentAlignment = if (offsetX >= 0f) Alignment.CenterStart else Alignment.CenterEnd,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Close,
+                contentDescription = null,
+                tint = confirmIconTint,
+                modifier = Modifier.padding(horizontal = 24.dp),
+            )
+        }
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .offset { IntOffset(offsetX.roundToInt(), 0) }
+                .then(
+                    if (enabled) {
+                        Modifier.pointerInput(Unit) {
+                            awaitEachGesture {
+                                val down = awaitFirstDown(requireUnconsumed = false)
+                                settleJob?.cancel()
+                                val slop = viewConfiguration.touchSlop
+                                var totalX = 0f
+                                var totalY = 0f
+                                var swiping = false
+                                var dragX = 0f
+                                val tracker = VelocityTracker()
+                                while (true) {
+                                    val event = awaitPointerEvent()
+                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                    if (!change.pressed) break
+                                    // Жест забрал кто-то другой (скролл списка, переупорядочивание) —
+                                    // свайп отменяем, ничего не потребляем.
+                                    if (change.isConsumed) break
+                                    if (!swiping) {
+                                        totalX += change.positionChange().x
+                                        totalY += change.positionChange().y
+                                        if (abs(totalX) >= slop && abs(totalX) > abs(totalY) * SWIPE_DIRECTION_BIAS) {
+                                            // Ведущий вектор — горизонталь: начинаем свайп.
+                                            swiping = true
+                                        } else if (abs(totalY) >= slop) {
+                                            // Ведущий вектор — вертикаль: это прокрутка списка.
+                                            break
+                                        } else {
+                                            continue
+                                        }
+                                    }
+                                    tracker.addPosition(change.uptimeMillis, change.position)
+                                    dragX += change.positionChange().x
+                                    offsetX = dragX
+                                    change.consume()
+                                }
+                                if (!swiping) return@awaitEachGesture
+                                val widthPx = size.width.toFloat().coerceAtLeast(1f)
+                                val velocityX = try {
+                                    tracker.calculateVelocity().x
+                                } catch (_: Exception) { 0f }
+                                val fastFling = abs(velocityX) > with(density) { SWIPE_FLING_DP_PER_S.dp.toPx() } &&
+                                    sign(velocityX) == sign(dragX)
+                                val shouldRemove = abs(dragX) > widthPx * SWIPE_COMMIT_FRACTION ||
+                                    (fastFling && abs(dragX) > widthPx * SWIPE_FLING_MIN_FRACTION)
+                                if (shouldRemove) {
+                                    // Дожимаем строку за край и удаляем: строка уйдёт из
+                                    // композиции, анимация удаления сработает как обычно.
+                                    offsetX = (if (dragX > 0f) widthPx else -widthPx) * 1.2f
+                                    currentOnConfirm()
+                                } else {
+                                    // Недостаточно — плавно возвращаем на место.
+                                    settleJob = scope.launch {
+                                        val anim = Animatable(offsetX)
+                                        anim.animateTo(
+                                            0f,
+                                            tween(SWIPE_SETTLE_MS, easing = FastOutSlowInEasing)
+                                        ) { value, _ -> offsetX = value }
+                                    }
+                                }
+                            }
+                        }
+                    } else {
+                        Modifier
+                    }
+                ),
+        ) {
+            content()
         }
     }
 }

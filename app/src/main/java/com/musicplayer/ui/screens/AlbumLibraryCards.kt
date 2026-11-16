@@ -162,8 +162,23 @@ internal fun SharedTransitionScope.AlbumTile(
     }
 }
 
+/**
+ * Все виды сортировки треков внутри альбома/плейлиста.
+ * Original — исходный порядок: для альбома это порядок альбома,
+ * для плейлиста — ручной порядок плейлиста (в меню подписывается «Порядок плейлиста»).
+ */
 private enum class AlbumSongSort(val label: String) {
-    Original("Порядок альбома"), Title("По названию трека"), Duration("По длительности")
+    Original("Порядок альбома"),
+    Title("По названию (А–Я)"),
+    TitleDesc("По названию (Я–А)"),
+    Artist("По исполнителю (А–Я)"),
+    ArtistDesc("По исполнителю (Я–А)"),
+    Album("По альбому (А–Я)"),
+    AlbumDesc("По альбому (Я–А)"),
+    Duration("По длительности (короткие)"),
+    DurationDesc("По длительности (длинные)"),
+    DateAdded("По дате добавления (новые)"),
+    DateAddedOldest("По дате добавления (старые)")
 }
 
 @Composable
@@ -186,7 +201,23 @@ internal fun SharedTransitionScope.AlbumDetailPage(
         when (sort) {
             AlbumSongSort.Original -> album.songs
             AlbumSongSort.Title -> album.songs.sortedBy { it.displayTitle().lowercase() }
+            AlbumSongSort.TitleDesc -> album.songs.sortedByDescending { it.displayTitle().lowercase() }
+            AlbumSongSort.Artist -> album.songs.sortedWith(
+                compareBy({ it.displayArtist().lowercase() }, { it.displayTitle().lowercase() })
+            )
+            AlbumSongSort.ArtistDesc -> album.songs.sortedWith(
+                compareBy({ it.displayArtist().lowercase() }, { it.displayTitle().lowercase() }).reversed()
+            )
+            AlbumSongSort.Album -> album.songs.sortedWith(
+                compareBy({ it.album.lowercase() }, { it.displayTitle().lowercase() })
+            )
+            AlbumSongSort.AlbumDesc -> album.songs.sortedWith(
+                compareBy({ it.album.lowercase() }, { it.displayTitle().lowercase() }).reversed()
+            )
             AlbumSongSort.Duration -> album.songs.sortedBy { it.duration }
+            AlbumSongSort.DurationDesc -> album.songs.sortedByDescending { it.duration }
+            AlbumSongSort.DateAdded -> album.songs.sortedByDescending { it.id }
+            AlbumSongSort.DateAddedOldest -> album.songs.sortedBy { it.id }
         }
     }
     val visibleTracks = remember(tracks, query) {

@@ -72,6 +72,7 @@ import com.musicplayer.ui.components.OptimizedAlbumArt
 import com.musicplayer.R
 import com.musicplayer.data.InterfaceStyle
 import com.musicplayer.data.Song
+import com.musicplayer.data.sortedForOrder
 import com.musicplayer.ui.components.AutoScrollingText
 import com.musicplayer.ui.components.PlayingEqIcon
 import com.musicplayer.ui.theme.*
@@ -280,13 +281,11 @@ fun HomeScreen(
     }
 
     val sortedSongs = remember(songs, settings.sortOrder) {
-        when (settings.sortOrder) {
-            com.musicplayer.data.SortOrder.TITLE      -> songs.sortedBy { it.title.lowercase() }
-            com.musicplayer.data.SortOrder.ARTIST     -> songs.sortedBy { it.artist.lowercase() }
-            com.musicplayer.data.SortOrder.ALBUM      -> songs.sortedBy { it.album.lowercase() }
-            com.musicplayer.data.SortOrder.DURATION   -> songs.sortedBy { it.duration }
-            com.musicplayer.data.SortOrder.DATE_ADDED -> songs.sortedByDescending { it.id }
-        }
+        songs.sortedForOrder(
+            settings.sortOrder,
+            titleKey  = { it.title.lowercase() },
+            artistKey = { it.artist.lowercase() }
+        )
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -482,6 +481,8 @@ fun HomeScreen(
                     showMenu         = showMenu,
                     onMenuToggle     = { showMenu = !showMenu },
                     onMenuDismiss    = { showMenu = false },
+                    sortOrder        = settings.sortOrder,
+                    onSortChange     = { viewModel.updateSettings(settings.copy(sortOrder = it)) },
                     onScanMusic      = {
                         showMenu = false
                         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU)
@@ -524,7 +525,13 @@ fun HomeScreen(
                     state = listState,
                     modifier = Modifier
                         .fillMaxSize()
-                        .simpleVerticalScrollbar(listState, color = c.accent.copy(alpha = 0.6f)),
+                        // Пока открыто меню медиатеки («⋮») — прячем индикатор позиции:
+                        // меню всплывает поверх списка и раньше перекрывало правый
+                        // край бара с позицией в медиатеке. Закрыли меню — бар вернулся.
+                        .then(
+                            if (showMenu) Modifier
+                            else Modifier.simpleVerticalScrollbar(listState, color = c.accent.copy(alpha = 0.6f))
+                        ),
                     contentPadding = PaddingValues(
                         top  = padding.calculateTopPadding() + 8.dp,
                         bottom = LocalBottomChromeHeight.current + BottomChromeExtraSpace
@@ -1963,6 +1970,8 @@ fun HomeTopBar(
     showMenu: Boolean,
     onMenuToggle: () -> Unit,
     onMenuDismiss: () -> Unit,
+    sortOrder: com.musicplayer.data.SortOrder,
+    onSortChange: (com.musicplayer.data.SortOrder) -> Unit,
     onScanMusic: () -> Unit,
     onSettings: () -> Unit
 ) {
@@ -2130,15 +2139,56 @@ fun HomeTopBar(
                                     .clipToBounds()
                                     .padding(horizontal = 16.dp)
                             ) {
-                                Text(
-                                    "${topBar.songCountPrefix}$sortedSongsCount ${pluralTracks(sortedSongsCount)}",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    fontFamily = font,
-                                    color = scheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                    modifier = Modifier.graphicsLayer { alpha = expandedFraction }
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        "${topBar.songCountPrefix}$sortedSongsCount ${pluralTracks(sortedSongsCount)}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        fontFamily = font,
+                                        color = scheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f).graphicsLayer { alpha = expandedFraction }
+                                    )
+                                    var sortMenuOpen by remember { mutableStateOf(false) }
+                                    Box {
+                                        IconButton(
+                                            onClick = { sortMenuOpen = true },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                Icons.Rounded.Sort,
+                                                contentDescription = "Сортировка треков",
+                                                tint = scheme.onSurfaceVariant,
+                                                modifier = Modifier
+                                                    .size(18.dp)
+                                                    .graphicsLayer { alpha = expandedFraction }
+                                            )
+                                        }
+                                        DropdownMenu(
+                                            expanded = sortMenuOpen,
+                                            onDismissRequest = { sortMenuOpen = false },
+                                            shape = MaterialTheme.shapes.large,
+                                            containerColor = scheme.surfaceContainer
+                                        ) {
+                                            librarySortOptions.forEach { option ->
+                                                DropdownMenuItem(
+                                                    text = { Text(option.title, fontFamily = font) },
+                                                    leadingIcon = {
+                                                        if (sortOrder == option.order) {
+                                                            Icon(Icons.Rounded.Check, null)
+                                                        } else {
+                                                            Icon(option.icon, null, tint = scheme.onSurfaceVariant)
+                                                        }
+                                                    },
+                                                    onClick = {
+                                                        sortMenuOpen = false
+                                                        onSortChange(option.order)
+                                                    }
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

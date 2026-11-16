@@ -17,6 +17,13 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.CancellationException
 
+/** Защитный порог: не проверяем ранний конец исходящего трека в первые же кадры фейда. */
+private const val EARLY_END_GUARD_MS = 400L
+/** Насколько сжимается остаток фейда, если исходящий трек закончился раньше времени. */
+private const val EARLY_END_COMPRESS_MS = 350L
+/** Пауза перед release() исходящего плеера после кроссфейда — см. комментарий в performOverlapTransition. */
+private const val OUTGOING_RELEASE_GRACE_MS = 180L
+
 /**
  * Два MediaPlayer'а (A — мастер, B — следующий) для кроссфейда.
  *
@@ -59,6 +66,13 @@ class DualPlayerEngine(private val context: Context) {
     private var duckFactor: Float = 1f
 
     var onPlayerSwapped: ((masterPlayer: MediaPlayer) -> Unit)? = null
+
+    /**
+     * Вызывается, когда переходный (следующий) плеер подготовлен: даёт хозяину
+     * шанс ЗАРАНЕЕ подготовить аудиоэффекты под его сессию, чтобы в момент
+     * кроссфейда не создавать/освобождать AudioEffect посреди активного микса.
+     */
+    var onNextPrepared: ((sessionId: Int) -> Unit)? = null
 
     fun setMasterPlayer(player: MediaPlayer) {
         releaseQuiet(playerA)
@@ -136,6 +150,12 @@ class DualPlayerEngine(private val context: Context) {
                     // Скорость применяется в performOverlapTransition() сразу после start().
                     it.setVolume(0f, 0f)
                     nextPrepared = playerB === it
+                    if (nextPrepared) {
+                        // Эффекты под новую сессию готовятся заранее — вне критического
+                        // пути кроссфейда (см. onNextPrepared).
+                        val sessionId = try { it.audioSessionId } catch (_: Exception) { 0 }
+                        onNextPrepared?.invoke(sessionId)
+                    }
                 } catch (_: Exception) {
                     nextPrepared = false
                 }
@@ -160,6 +180,17 @@ class DualPlayerEngine(private val context: Context) {
             nextPrepared = false
             playerB = null
         }
+    }
+
+    /**
+     * prepareNext с коротким ожиданием файлового кэша TrackPreloader'а.
+     * Если копирование ещё идёт — даём ему до [awaitCacheMs] докопировать:
+     * подготовка по локальному файлу мгновенна, а по content:// на медленных
+     * накопителях старт следующего трека может «провиснуть» на секунду.
+     */
+    suspend fun prepareNextAwaitCache(uri: Uri, awaitCacheMs: Long = 1_200L) {
+        val resolved = TrackPreloader.readyOrAwait(context, uri, awaitCacheMs) ?: uri
+        prepareNext(resolved)
     }
 
     suspend fun waitUntilNextPrepared(timeoutMs: Long = 2_000L): Boolean {
@@ -244,6 +275,7 @@ class DualPlayerEngine(private val context: Context) {
             applyVolume(nextPlayer, 1f)
             onPlayerSwapped?.invoke(nextPlayer)
             onSwapReady?.invoke()
+            delay(OUTGOING_RELEASE_GRACE_MS)
             releaseQuiet(outgoing)
             playerB = null
             nextPrepared = false
@@ -260,10 +292,26 @@ class DualPlayerEngine(private val context: Context) {
 
         val startAt = SystemClock.uptimeMillis()
         val stepMs = 16L
+        // Фактическая длительность фейда. Может ужаться, если исходящий трек
+        // отыграет раньше: длительность у VBR/MP3 MediaPlayer часто сообщает
+        // неточно (реальное аудио кончается на секунду раньше заявленной),
+        // и тогда после кроссфейда оставалась секунда «провисания».
+        var effectiveFadeMs = fadeMs
 
         while (true) {
             val elapsed = SystemClock.uptimeMillis() - startAt
-            val progress = (elapsed.toFloat() / fadeMs).coerceIn(0f, 1f)
+
+            // Исходящий плеер уже закончил реальное аудио? Не тянем тишину до
+            // конца настройки — сжимаем остаток фейда, чтобы новый трек быстро
+            // дошёл до полной громкости.
+            if (effectiveFadeMs == fadeMs && elapsed > EARLY_END_GUARD_MS) {
+                val outgoingAlive = try { playerB?.isPlaying == true } catch (_: Exception) { false }
+                if (!outgoingAlive) {
+                    effectiveFadeMs = (elapsed + EARLY_END_COMPRESS_MS).coerceAtMost(fadeMs)
+                }
+            }
+
+            val progress = (elapsed.toFloat() / effectiveFadeMs).coerceIn(0f, 1f)
 
             val volIn = fadeIn(progress, settings.curveIn)
             val volOut = fadeOut(progress, settings.curveOut)
@@ -278,12 +326,17 @@ class DualPlayerEngine(private val context: Context) {
             } catch (_: Exception) {
             }
 
-            if (elapsed >= fadeMs) break
+            if (elapsed >= effectiveFadeMs) break
             delay(stepMs)
         }
 
         masterEnvelope = 1f
         applyVolume(playerA, 1f)
+        // Отпускаем исходящий плеер с короткой передышкой. Мгновенный release()
+        // посреди активного микса на части прошивок (Xiaomi/Redmi) оставляет
+        // артефакт в эффект-чейне — «испорченный» звук уже в новом треке,
+        // который лечится только выключением-включением воспроизведения.
+        delay(OUTGOING_RELEASE_GRACE_MS)
         releaseQuiet(outgoing)
         playerB = null
         nextPrepared = false

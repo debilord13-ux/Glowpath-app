@@ -231,4 +231,41 @@ enum class AppTheme   {
     SAPPHIRE, MINT, BRONZE, WINE
 }
 enum class InterfaceStyle { CLASSIC, MATERIAL3, LIQUID_GLASS }
-enum class SortOrder  { TITLE, ARTIST, ALBUM, DURATION, DATE_ADDED }
+/**
+ * Все виды сортировки песен. Новые варианты добавлены В КОНЕЦ списка:
+ * порядок enum-а раньше сохранялся в SharedPreferences по номеру, а теперь —
+ * по имени, но перестраховка ничего не стоит.
+ */
+enum class SortOrder  {
+    TITLE, ARTIST, ALBUM, DURATION, DATE_ADDED,
+    TITLE_DESC, ARTIST_DESC, ALBUM_DESC, DURATION_DESC, DATE_ADDED_OLDEST
+}
+
+/**
+ * Единая сортировка списка песен по любому из видов [SortOrder].
+ *
+ * titleKey/artistKey позволяют подставить либо «сырые» теги (title/artist),
+ * либо пользовательские переименования (displayTitle/displayArtist) — все
+ * экраны (медиатека, очередь, плейлисты) сортируются одним и тем же кодом.
+ */
+fun List<Song>.sortedForOrder(
+    order: SortOrder,
+    titleKey: (Song) -> String,
+    artistKey: (Song) -> String
+): List<Song> {
+    val byTitle = compareBy(titleKey)
+    val byArtist = compareBy<Song>(artistKey).thenBy(titleKey)
+    val byAlbum = compareBy<Song> { it.album.lowercase() }.thenBy(titleKey)
+    return when (order) {
+        SortOrder.TITLE             -> sortedBy(titleKey)
+        SortOrder.TITLE_DESC        -> sortedByDescending(titleKey)
+        SortOrder.ARTIST            -> sortedWith(byArtist)
+        SortOrder.ARTIST_DESC       -> sortedWith(byArtist.reversed())
+        SortOrder.ALBUM             -> sortedWith(byAlbum)
+        SortOrder.ALBUM_DESC        -> sortedWith(byAlbum.reversed())
+        SortOrder.DURATION          -> sortedBy { it.duration }
+        SortOrder.DURATION_DESC     -> sortedByDescending { it.duration }
+        SortOrder.DATE_ADDED        -> sortedByDescending { it.id }
+        SortOrder.DATE_ADDED_OLDEST -> sortedBy { it.id }
+    }
+}

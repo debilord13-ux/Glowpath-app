@@ -23,6 +23,7 @@ import com.musicplayer.data.PlayerSettings
 import com.musicplayer.data.PreferencesManager
 import com.musicplayer.data.RepeatMode
 import com.musicplayer.data.Song
+import com.musicplayer.data.sortedForOrder
 import com.musicplayer.data.TransitionMode
 import com.musicplayer.data.TransitionSettings
 import com.musicplayer.data.UserAlbum
@@ -272,6 +273,16 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
      *  работают в одной сессии — эффекты не пересоздаются посреди кроссфейда
      *  и действуют на оба трека одновременно. */
     private var eqSessionId: Int = -1
+    /**
+     * Эффекты, подготовленные ЗАРАНЕЕ под сессию СЛЕДУЮЩЕГО (переходного) плеера
+     * кроссфейда. Создаются в тихий момент (при prepareNext) и поднимаются уже
+     * ПОСЛЕ конца кроссфейда: создание/освобождение AudioEffect посреди активного
+     * микса на части прошивок (Xiaomi/Redmi) звучит как искажение звука после
+     * перехода, которое лечится только выключением-включением воспроизведения.
+     */
+    private var pendingEqualizer: android.media.audiofx.Equalizer? = null
+    private var pendingVirtualizer: android.media.audiofx.Virtualizer? = null
+    private var pendingEqSessionId: Int = -1
 
     fun updateEqGains(gains: List<Float>) {
         _eqGains.value = gains
@@ -337,7 +348,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun applyEqToPlayer() {
-        val eq = androidEqualizer ?: return
+        applyEqGainsTo(androidEqualizer)
+    }
+
+    /** Уровни полос применяются к любой паре эффектов: активной или готовящейся. */
+    private fun applyEqGainsTo(eq: android.media.audiofx.Equalizer?) {
+        if (eq == null) return
         val gains = _eqGains.value
         val numBands = eq.numberOfBands.toInt()
         gains.take(numBands).forEachIndexed { i, gain ->
@@ -348,6 +364,67 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Освобождает пару эффектов, подготовленную под отменённый/устаревший переход. */
+    private fun releasePendingEffects() {
+        try { pendingEqualizer?.release() } catch (_: Exception) {}
+        try { pendingVirtualizer?.release() } catch (_: Exception) {}
+        pendingEqualizer = null
+        pendingVirtualizer = null
+        pendingEqSessionId = -1
+    }
+
+    /**
+     * Готовит эффекты под сессию переходного плеера ЗАРАНЕЕ (вызывается из
+     * DualPlayerEngine.onNextPrepared — задолго до кроссфейда). Пару активной
+     * сессии не трогаем: исходящий трек продолжает играть со своими эффектами.
+     */
+    private fun prepareEffectsForSession(sessionId: Int) {
+        if (sessionId <= 0) return
+        if (pendingEqSessionId == sessionId && pendingEqualizer != null) {
+            try { pendingEqualizer?.enabled = _eqEnabled.value } catch (_: Exception) {}
+            try { pendingVirtualizer?.enabled = _spatialAudio.value } catch (_: Exception) {}
+            return
+        }
+        releasePendingEffects()
+        try {
+            pendingEqualizer = android.media.audiofx.Equalizer(0, sessionId).apply {
+                enabled = _eqEnabled.value
+            }
+            applyEqGainsTo(pendingEqualizer)
+        } catch (_: Exception) {
+            pendingEqualizer = null
+        }
+        try {
+            pendingVirtualizer = android.media.audiofx.Virtualizer(0, sessionId).apply {
+                enabled = _spatialAudio.value
+            }
+        } catch (_: Exception) {
+            pendingVirtualizer = null
+        }
+        pendingEqSessionId = sessionId
+    }
+
+    /**
+     * Кроссфейд завершён: поднимаем заранее подготовленную пару эффектов и
+     * освобождаем пару исходящей сессии. К этому моменту исходящий плеер уже
+     * released — AudioEffect-объекты меняются в тихой точке, без артефактов
+     * в эффект-чейне (именно они давали «испорченный» звук после перехода).
+     */
+    private fun commitPreparedEffects() {
+        try { androidEqualizer?.release() } catch (_: Exception) {}
+        try { androidVirtualizer?.release() } catch (_: Exception) {}
+        androidEqualizer = pendingEqualizer
+        androidVirtualizer = pendingVirtualizer
+        eqSessionId = pendingEqSessionId
+        pendingEqualizer = null
+        pendingVirtualizer = null
+        pendingEqSessionId = -1
+        // Переприменяем настройки: пока шёл кроссфейд, пользователь мог менять EQ.
+        applyEqToPlayer()
+        try { androidEqualizer?.enabled = _eqEnabled.value } catch (_: Exception) {}
+        try { androidVirtualizer?.enabled = _spatialAudio.value } catch (_: Exception) {}
+    }
+
     private fun attachEqualizerToSession(sessionId: Int) {
         // Эффекты уже висят на этой сессии — просто переприменяем уровни:
         // пересоздание посреди кроссфейда звучало бы как «сброс на базовые настройки».
@@ -355,10 +432,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             applyEqToPlayer()
             try { androidEqualizer?.enabled = _eqEnabled.value } catch (_: Exception) {}
             try { androidVirtualizer?.enabled = _spatialAudio.value } catch (_: Exception) {}
+            releasePendingEffects()
             return
         }
 
-        // Release old instances
+        // Release old instances (плюс «подготовленные», если запланированный переход был отменён)
+        releasePendingEffects()
         androidEqualizer?.release()
         androidVirtualizer?.release()
         androidEqualizer = null
@@ -449,6 +528,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     init {
+        // Заранее готовим аудиоэффекты под сессию переходного плеера кроссфейда:
+        // их создание/освобождение выносится из активного микса (см. комментарий
+        // к prepareEffectsForSession — причина «испорченного» звука после перехода).
+        dualEngine.onNextPrepared = { sessionId -> prepareEffectsForSession(sessionId) }
+
         // Launch service immediately so it's ready
         val intent = Intent(application, MusicService::class.java)
         application.bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
@@ -1137,16 +1221,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // ── Playback ─────────────────────────────────────────────────────────────
 
     /** Returns the song list sorted according to current settings (mirrors HomeScreen logic). */
-    private fun getSortedSongs(): List<Song> {
-        val raw = _songs.value
-        return when (_settings.value.sortOrder) {
-            com.musicplayer.data.SortOrder.TITLE      -> raw.sortedBy { it.title.lowercase() }
-            com.musicplayer.data.SortOrder.ARTIST     -> raw.sortedBy { it.artist.lowercase() }
-            com.musicplayer.data.SortOrder.ALBUM      -> raw.sortedBy { it.album.lowercase() }
-            com.musicplayer.data.SortOrder.DURATION   -> raw.sortedBy { it.duration }
-            com.musicplayer.data.SortOrder.DATE_ADDED -> raw.sortedByDescending { it.id }
-        }
-    }
+    private fun getSortedSongs(): List<Song> =
+        _songs.value.sortedForOrder(
+            _settings.value.sortOrder,
+            titleKey  = { it.title.lowercase() },
+            artistKey = { it.artist.lowercase() }
+        )
 
     fun playSong(song: Song, preserveBridgeQueue: Boolean = false, animateSwitch: Boolean? = null) {
         clearRedoStack()
@@ -1375,10 +1455,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 dualEngine.onPlayerSwapped = { newMaster ->
                     // Вызывается когда кроссфейд поменял плееры местами —
                     // обновляем ссылку на активный MediaPlayer и вешаем completion.
+                    // ЭФФЕКТЫ здесь НЕ трогаем: пара для новой сессии подготовлена
+                    // заранее (prepareEffectsForSession), а старая освобождается
+                    // уже после конца кроссфейда (commitPreparedEffects) — иначе
+                    // release() AudioEffect посреди активного микса искажал звук.
                     mediaPlayer = newMaster
                     try { newMaster.setOnCompletionListener { onSongComplete() } } catch (_: Exception) {}
                     try { newMaster.isLooping = (_settings.value.repeatMode == RepeatMode.ONE) } catch (_: Exception) {}
-                    try { attachEqualizerToSession(newMaster.audioSessionId) } catch (_: Exception) {}
                 }
                 // Attach equalizer effects to the new MediaPlayer's audio session
                 try { attachEqualizerToSession(prepared.audioSessionId) } catch (_: Exception) {}
@@ -1432,6 +1515,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Планирует автопереход-кроссфейд к следующему треку (если включено). */
     private fun scheduleNextTransition(currentSong: Song) {
+        // Расписание пересобирается — эффекты под прежний переходный плеер
+        // больше не нужны (сам плеер будет создан заново).
+        releasePendingEffects()
         val settings = _transitionSettings.value
         if (settings.mode == TransitionMode.NONE || _settings.value.repeatMode == RepeatMode.ONE) {
             // Повтор одного трека играется сам собой (isLooping) — переход «в самого себя»
@@ -1482,6 +1568,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Финализация после кроссфейда (метаданные уже обновлены при onPlayerSwapped). */
     private fun finishEngineTransition(nextSong: Song) {
+        // Смена эффектов на заранее подготовленную пару — в тихой точке после
+        // release() исходящего плеера (см. комментарий в commitPreparedEffects).
+        commitPreparedEffects()
         flushStatsIfNeeded()
         _duration.value = try {
             mediaPlayer?.duration?.toLong() ?: nextSong.duration
@@ -1562,13 +1651,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun sortedVisibleSongs(visible: List<Song>): List<Song> {
-        return when (_settings.value.sortOrder) {
-            com.musicplayer.data.SortOrder.TITLE      -> visible.sortedBy { it.displayTitle().lowercase() }
-            com.musicplayer.data.SortOrder.ARTIST     -> visible.sortedBy { it.displayArtist().lowercase() }
-            com.musicplayer.data.SortOrder.ALBUM      -> visible.sortedBy { it.album.lowercase() }
-            com.musicplayer.data.SortOrder.DURATION   -> visible.sortedBy { it.duration }
-            com.musicplayer.data.SortOrder.DATE_ADDED -> visible.sortedByDescending { it.id }
-        }
+        return visible.sortedForOrder(
+            _settings.value.sortOrder,
+            titleKey  = { it.displayTitle().lowercase() },
+            artistKey = { it.displayArtist().lowercase() }
+        )
     }
 
     /** Обновляет настройки кроссфейда (вызывается из EditTransitionScreen). */
@@ -2502,6 +2589,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         dualEngine.release()
         try { androidEqualizer?.release() } catch (_: Exception) {}
         try { androidVirtualizer?.release() } catch (_: Exception) {}
+        releasePendingEffects()
         try { getApplication<Application>().unbindService(serviceConnection) } catch (e: Exception) {}
     }
 }

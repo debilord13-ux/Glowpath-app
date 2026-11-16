@@ -70,7 +70,9 @@ class TransitionController(private val engine: DualPlayerEngine) {
             }
 
             val transitionPoint = (duration - fadeDur).coerceAtLeast(0L)
-            val prebufferLead = 6_000L.coerceAtLeast(fadeDur + 1_500L)
+            // Готовим следующий плеер заранее и с запасом: чем раньше — тем выше
+            // шанс, что файловый кэш уже докопирован и prepareAsync мгновенен.
+            val prebufferLead = 10_000L.coerceAtLeast(fadeDur + 2_000L)
             val prebufferPoint = (transitionPoint - prebufferLead).coerceAtLeast(0L)
 
             var prebuffered = false
@@ -79,28 +81,46 @@ class TransitionController(private val engine: DualPlayerEngine) {
                 val pos = getPositionMs().coerceAtLeast(0L)
 
                 if (!prebuffered && pos >= prebufferPoint) {
-                    engine.prepareNext(nextSong.uri)
+                    engine.prepareNextAwaitCache(nextSong.uri)
                     prebuffered = true
                 }
 
                 if (pos >= transitionPoint) {
                     if (!engine.isTransitionRunning()) {
                         if (prebuffered) {
-                            val ready = engine.waitUntilNextPrepared()
+                            val ready = engine.waitUntilNextPrepared(4_000L)
                             if (!ready) {
                                 engine.cancelNext()
                                 return@launch
                             }
                         } else {
-                            engine.prepareNext(nextSong.uri)
-                            val ready = engine.waitUntilNextPrepared()
+                            engine.prepareNextAwaitCache(nextSong.uri)
+                            val ready = engine.waitUntilNextPrepared(4_000L)
                             if (!ready) {
                                 engine.cancelNext()
                                 return@launch
                             }
                         }
                         if (!isActive) return@launch
-                        engine.performTransition(appliedSettings, onTransitionComplete) {
+                        // Фейд ужинается под ФАКТИЧЕСКИЙ остаток трека: позиция
+                        // обновляется рывками, и срабатывание могло случиться позже
+                        // точки перехода. Полный фейд тогда вышел бы за конец трека:
+                        // исходящий закончился бы посреди фейда, и на секунду
+                        // повисла тишина. Ужимаем — но не отменяем.
+                        val remainingMs = (duration - pos).coerceAtMost(fadeDur)
+                        if (remainingMs <= 0L) {
+                            // До конца трека нет времени даже на укороченный фейд —
+                            // отдаём смену onCompletion: кэш следующего трека прогрет,
+                            // там разрыв минимальный.
+                            engine.cancelNext()
+                            return@launch
+                        }
+                        val transitionSettings = if (remainingMs < fadeDur) {
+                            appliedSettings.copy(durationMs = remainingMs.toInt())
+                        } else {
+                            appliedSettings
+                        }
+                        engine.performTransition(transitionSettings, onTransitionComplete) {
                             onSwapReady?.invoke(nextSong)
                         }
                     }
