@@ -61,8 +61,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.Bedtime
+import androidx.compose.material.icons.rounded.CenterFocusStrong
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.KeyboardArrowUp
 import androidx.compose.material.icons.rounded.LibraryAdd
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material.icons.rounded.Pause
@@ -87,6 +87,7 @@ import androidx.compose.material3.rememberBottomSheetScaffoldState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -138,6 +139,7 @@ import com.musicplayer.ui.theme.LocalAppFontFamily
 import com.musicplayer.viewmodel.MusicViewModel
 import com.musicplayer.viewmodel.SleepTimerAction
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private val QueueTitleRowHeight = 48.dp
@@ -920,7 +922,16 @@ private fun PlayerQueueSheetContent(
         ) {
             itemsIndexed(
                 queue,
-                key = { index, item -> if (identity.hasDuplicates) index else item.id },
+                key = { index, item ->
+                    if (!identity.hasDuplicates) item.id else {
+                        // Один и тот же трек может легально встретиться дважды (в истории
+                        // и в будущих). Ключ «id#повтор» стабильнее голого индекса: при
+                        // сдвиге списка состояния строк не перепутываются, и свайп-фон
+                        // удаления не «прилипает» к чужим строкам.
+                        val occurrence = queue.subList(0, index).count { it.id == item.id }
+                        "${item.id}#$occurrence"
+                    }
+                },
             ) { index, item ->
                 key(identity) {
                     var removalRequested by remember { mutableStateOf(false) }
@@ -933,6 +944,16 @@ private fun PlayerQueueSheetContent(
                             true
                         },
                     )
+                    // Страховка от «красной плашки»: если удаление не применилось и
+                    // строка всё ещё в списке, через мгновение возвращаем её из
+                    // dismissed-состояния. Если строка реально удалилась — композиция
+                    // умрёт раньше, и этот эффект просто не успеет сработать.
+                    LaunchedEffect(removalRequested, queue.size) {
+                        if (!removalRequested) return@LaunchedEffect
+                        delay(600)
+                        try { dismissState.snapTo(SwipeToDismissBoxValue.Settled) } catch (_: Exception) {}
+                        removalRequested = false
+                    }
                     Box(
                         modifier = Modifier
                             .animateItem(
@@ -1081,7 +1102,14 @@ private fun PlayerQueueSheetContent(
                         ),
                     ) {
                         Surface(
-                            onClick = { scope.launch { listState.animateScrollToItem(0) } },
+                            onClick = {
+                                scope.launch {
+                                    // Кнопка ведёт к ИГРАЮЩЕМУ треку, а не к началу списка:
+                                    // в длинной очереди с историей «начало» почти бесполезно.
+                                    if (currentIndex >= 0) listState.animateScrollToItem(currentIndex)
+                                    else listState.animateScrollToItem(0)
+                                }
+                            },
                             shape = RoundedCornerShape(14.dp),
                             color = vivid.copy(alpha = 0.16f).compositeOver(panelColor),
                             contentColor = ink,
@@ -1093,12 +1121,12 @@ private fun PlayerQueueSheetContent(
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                             ) {
                                 Icon(
-                                    imageVector = Icons.Rounded.KeyboardArrowUp,
-                                    contentDescription = "Пролистать очередь к началу",
+                                    imageVector = Icons.Rounded.CenterFocusStrong,
+                                    contentDescription = "Пролистать к играющему треку",
                                     modifier = Modifier.size(16.dp),
                                 )
                                 Text(
-                                    text = "К началу",
+                                    text = "К играющей",
                                     style = MaterialTheme.typography.labelMedium,
                                     fontFamily = LocalAppFontFamily.current,
                                 )

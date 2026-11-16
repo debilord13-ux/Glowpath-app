@@ -394,16 +394,22 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private var playbackGeneration = 0
     /** Активный фейд переключения (затухание старой / нарастание новой). */
     private var switchFadeJob: Job? = null
-    /** true — текущий switchFadeJob ведёт АВТОпереход (его можно отменить перемоткой). */
-    private var switchFadeIsAuto = false
+    /**
+     * Трек, к которому УЖЕ началось, но ещё не завершилось переключение
+     * (идёт фейд/готовится плеер). Очередь показывает его как якорь вместо
+     * текущего трека — иначе новая песня на время анимации исчезала из
+     * списка, а через секунду появлялась снова.
+     */
+    private var pendingQueueSongId: Long? = null
 
     // ── Transition Engine ────────────────────────────────────────────────────
     // Движок кроссфейда (два MediaPlayer) + контроллер расписания переходов.
     // Адаптировано из DualPlayerEngine / TransitionController (PixelPlay).
-    // TransitionController — только «будильник» точки автоперехода; сам переход
-    // теперь ПОСЛЕДОВАТЕЛЬНЫЙ (фейд → стоп → старт), как и ручное переключение.
+    // АВТОпереход — наложение двух плееров (кроссфейд) с длительностью ИЗ
+    // НАСТРОЕК переходов — главная фишка приложения. Ручное переключение —
+    // последовательный фейд огибающей (0.2–1.0 с, свой слайдер).
     private val dualEngine         = DualPlayerEngine(application)
-    private val transitionCtrl     = TransitionController()
+    private val transitionCtrl     = TransitionController(dualEngine)
 
     private val _transitionSettings = MutableStateFlow(prefs.loadTransitionSettings())
     val transitionSettings: StateFlow<TransitionSettings> = _transitionSettings.asStateFlow()
@@ -701,18 +707,27 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // (прослушанное помечается как played), затем текущий трек и будущие.
             // Раньше при переходе на следующую песню она исчезала из очереди, и
             // после возврата назад «Следующий» выкидывал на посторонний трек.
+            // Пока переключение «в полёте», якорем служит ЦЕЛЕВОЙ трек — тогда он
+            // не исчезает из списка на время анимации и не появляется повторно.
+            val pendingSong = pendingQueueSongId?.let { pid -> sorted.firstOrNull { it.id == pid } }
+            val anchor = pendingSong ?: current
             val historySongs = previousTrackHistory
                 .mapNotNull { id -> sorted.firstOrNull { it.id == id } }
                 .distinctBy { it.id }
-                .filter { it.id != current.id }
+                .filter { it.id != anchor.id }
             return PlayerQueue(
-                historySongs + listOf(current) + shuffleRemaining.map { sorted[it] },
+                historySongs + listOf(anchor) + shuffleRemaining.map { sorted[it] },
                 historySongs.size,
                 true
             )
         }
         val list = sorted
-        return PlayerQueue(list, list.indexOfFirst { it.uri == current?.uri }, false)
+        // В явной очереди тот же принцип: посреди переключения якорь — целевой трек,
+        // чтобы строка не мигала «пропала/вернулась».
+        val anchorSong = pendingQueueSongId
+            ?.let { pid -> list.firstOrNull { it.id == pid } }
+            ?: current
+        return PlayerQueue(list, list.indexOfFirst { it.uri == anchorSong?.uri }, false)
     }
 
     fun playQueueItem(index: Int) {
@@ -783,7 +798,20 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         if (queue.songs.size <= 1 || index !in queue.songs.indices) return
         if (queue.shuffled) {
             when {
-                index == queue.currentIndex -> playNext()
+                index == queue.currentIndex -> {
+                    val removedId = queue.songs[index].id
+                    playNext()
+                    // Песню УДАЛИЛИ из очереди — playNext успел запомнить её как
+                    // «предыдущую». Убираем её из истории и из будущих shuffle-треков,
+                    // иначе удалённая песня оставалась висеть в списке очереди.
+                    val historyIdx = previousTrackHistory.lastIndexOf(removedId)
+                    if (historyIdx >= 0) previousTrackHistory.removeAt(historyIdx)
+                    if (_settings.value.shuffleEnabled) {
+                        val removedSortedIdx = activePlaybackSongs().indexOfFirst { it.id == removedId }
+                        if (removedSortedIdx >= 0) shuffleRemaining.remove(removedSortedIdx)
+                    }
+                    _queueRevision.value += 1
+                }
                 index < queue.currentIndex -> {
                     // Удаление из истории прослушивания: прошлые треки больше
                     // не выбрасываются из очереди автоматически — только вручную.
@@ -1204,6 +1232,9 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun startPlayback(song: Song, rememberHistory: Boolean = true, animateSwitch: Boolean? = null) {
         if (rememberHistory) rememberPreviousTrack(song)
+        // Переключение началось: целевой трек становится «якорем» очереди,
+        // чтобы он не пропадал из списка до момента фактического старта.
+        pendingQueueSongId = song.id
         flushStatsIfNeeded()  // record previous song before switching
         // Поколение воспроизведения: каждая новая команда переключения инвалидирует
         // «старые» колбэки (onPrepared/onError/фейды) — защита от гонок и двойного
@@ -1220,7 +1251,6 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             // с таким же линейным нарастанием (длительность — из настроек, 0.2–1.0 с).
             // Никакого кроссфейда.
             transitionCtrl.cancelPendingTransition()
-            switchFadeIsAuto = false
             switchFadeJob = viewModelScope.launch {
                 if (!runLinearMasterFade(toZero = true, gen = gen, fadeMs = manualSwitchFadeMs())) return@launch
                 stopPlayback()
@@ -1285,6 +1315,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             e.printStackTrace()
             try { player.release() } catch (_: Exception) {}
+            pendingQueueSongId = null   // трек не запустится — снимаем «якорь» очереди
             showPlaybackErrorToast(e)
             return
         }
@@ -1329,6 +1360,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                     applyVolumeWithBalance()   // volume + preamp + L/R balance
                 }
                 _currentSong.value = song
+                pendingQueueSongId = null   // переключение завершилось — якорь больше не нужен
                 _isPlaying.value   = true
                 _duration.value    = try {
                     prepared.duration.toLong().coerceAtLeast(0L)
@@ -1358,6 +1390,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         }
         player.setOnErrorListener { _, what, extra ->
             if (gen != playbackGeneration) return@setOnErrorListener true
+            pendingQueueSongId = null   // трек не запустится — снимаем «якорь» очереди
             mediaPlayer = null
             _isPlaying.value = false
             stopProgressTracking()
@@ -1397,7 +1430,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
 
     // ── Планирование кроссфейда ──────────────────────────────────────────────
 
-    /** Планирует ПОСЛЕДОВАТЕЛЬНЫЙ автопереход к следующему треку (если включено). */
+    /** Планирует автопереход-кроссфейд к следующему треку (если включено). */
     private fun scheduleNextTransition(currentSong: Song) {
         val settings = _transitionSettings.value
         if (settings.mode == TransitionMode.NONE || _settings.value.repeatMode == RepeatMode.ONE) {
@@ -1423,6 +1456,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
+        // Поколение на момент планирования: если посреди перехода пришла ручная
+        // смена (generation растёт), «поздние» колбэки кроссфейда глушим — иначе
+        // завершение прерванного кроссфейда перепланировало бы переход к уже
+        // неактуальному треку.
+        val scheduledGen = playbackGeneration
         transitionCtrl.scheduleTransition(
             currentSong          = currentSong,
             nextSong             = nextSong,
@@ -1433,43 +1471,70 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
                 try { mediaPlayer?.duration?.toLong()?.coerceAtLeast(0L) ?: 0L } catch (_: Exception) { 0L }
             },
             settings             = settings,
-            onTransitionPoint    = { fadeMs -> beginSequentialAutoTransition(nextSong, fadeMs) }
+            onTransitionComplete = {
+                if (playbackGeneration == scheduledGen) finishEngineTransition(nextSong)
+            },
+            onSwapReady          = { swappedToSong ->
+                if (playbackGeneration == scheduledGen) swapUiToSong(swappedToSong, recordHistory = true)
+            }
         )
     }
 
-    /**
-     * Автопереход в конце трека — та же механика, что и плавное ручное переключение:
-     * для каждой песни создаётся СВОЯ анимация (линейный фейд огибающей мастера,
-     * проверенно работает без лагов), а тайминги совмещены с настройкой переходов:
-     * затухание стартует за fadeMs до конца текущего трека и завершается ровно к его
-     * финалу, затем следующий трек плавно нарастает. Никакого наложения треков.
-     */
-    private fun beginSequentialAutoTransition(nextSong: Song, fadeMs: Long) {
-        if (_settings.value.repeatMode == RepeatMode.ONE) return
-        if (switchFadeJob?.isActive == true) return
-        clearRedoStack()
+    /** Финализация после кроссфейда (метаданные уже обновлены при onPlayerSwapped). */
+    private fun finishEngineTransition(nextSong: Song) {
         flushStatsIfNeeded()
-        rememberPreviousTrack(nextSong)
-        playbackGeneration += 1
-        val gen = playbackGeneration
-        // «Съедаем» shuffle-очередь так же, как это делал кроссфейд в swapUiToSong:
-        // иначе кнопка «Следующий» запускала бы ту же песню заново.
-        val active = activePlaybackSongs()
-        val idx = active.indexOfFirst { it.id == nextSong.id }
+        _duration.value = try {
+            mediaPlayer?.duration?.toLong() ?: nextSong.duration
+        } catch (_: Exception) {
+            nextSong.duration
+        }
+        applyVolumeWithBalance()
+        // Планируем следующий переход
+        scheduleNextTransition(nextSong)
+    }
+
+    /**
+     * Обновление UI в начале кроссфейда: название/обложка соответствуют уже играющему
+     * треку. Вызывается планировщиком через onSwapReady в момент смены мастеров.
+     */
+    private fun swapUiToSong(swappedToSong: Song, recordHistory: Boolean) {
+        // Сначала сбрасываем статистику ИСХОДЯЩЕГО трека: после смены
+        // trackingSongId накопленное время прослушивания потерялось бы.
+        flushStatsIfNeeded()
+        if (recordHistory) {
+            rememberPreviousTrack(swappedToSong)
+        }
+        _currentSong.value  = swappedToSong
+        pendingQueueSongId  = null
+        // Индекс и «съедание» shuffle-очереди считаем в активном списке
+        // (плейлист, если он запущен, иначе библиотека) — иначе кроссфейд
+        // рассинхронизирует shuffle с плейлистом.
+        val list = activePlaybackSongs()
+        val idx = list.indexOfFirst { it.id == swappedToSong.id }
         if (idx >= 0) {
             if (resolveBridgeQueueSongs().isEmpty()) {
                 _currentIndex.value = idx
             }
+            // Кроссфейд не проходит через playNext(), поэтому «съедаем» трек из
+            // shuffle-очереди здесь. Иначе он оставался первым в очереди, и
+            // кнопка «Следующий» запускала ту же самую песню заново.
             if (_settings.value.shuffleEnabled && shuffleRemaining.remove(idx)) {
                 _queueRevision.value += 1
             }
         }
-        switchFadeIsAuto = true
-        switchFadeJob = viewModelScope.launch {
-            if (!runLinearMasterFade(toZero = true, gen = gen, fadeMs = fadeMs)) return@launch
-            stopPlayback()
-            beginPlayback(nextSong, gen, animateIn = true, fadeMs = fadeMs)
+        trackingStartMs     = System.currentTimeMillis()
+        trackingSongId      = swappedToSong.id
+        _currentPosition.value = 0L
+        _duration.value = try {
+            mediaPlayer?.duration?.toLong() ?: swappedToSong.duration
+        } catch (_: Exception) {
+            swappedToSong.duration
         }
+        _isPlaying.value = true
+        startProgressTracking()
+        loadLyricsForSong(swappedToSong)
+        pushNotificationState(forceMetadata = true)
+        syncBridgeState()
     }
 
     /** Следующий трек без запуска playback — для планирования кроссфейда. */
@@ -1705,12 +1770,11 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun seekTo(position: Long) {
         // Перемотка прерывает запланированный переход
         transitionCtrl.cancelPendingTransition()
-        // Перемотка посреди АВТОперехода отменяет и сам переход: пользователь
-        // решил остаться на этом треке (фейд гасил громкость — возвращаем её).
-        if (switchFadeIsAuto && switchFadeJob?.isActive == true) {
+        // Перемотка посреди фейда переключения отменяет сам фейд: пользователь
+        // решил остаться/разобраться на этом треке — громкость возвращаем сразу.
+        if (switchFadeJob?.isActive == true) {
             switchFadeJob?.cancel()
             switchFadeJob = null
-            switchFadeIsAuto = false
             dualEngine.setMasterEnvelope(1f)
         }
         // Плеер мог быть ещё не подготовлен (prepareAsync идёт) — seekTo на таком
@@ -2093,7 +2157,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         val currentIndex = sorted.indexOfFirst { it.id == _currentSong.value?.id }
             .takeIf { it >= 0 }
             ?: _currentIndex.value.coerceIn(0, sorted.lastIndex)
-        val previousIndex = if (currentIndex <= 0) sorted.lastIndex else currentIndex - 1
+        // На ПЕРВОМ треке «Назад» всегда просто перематывает на начало —
+        // никаких перескоков на последний/следующий трек.
+        if (currentIndex <= 0) {
+            seekTo(0L)
+            return
+        }
+        val previousIndex = currentIndex - 1
         if (resolveBridgeQueueSongs().isEmpty()) {
             _currentIndex.value = previousIndex
         }

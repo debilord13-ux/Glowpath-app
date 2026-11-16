@@ -13,21 +13,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Планирует ПОСЛЕДОВАТЕЛЬНЫЙ переход между треками — без наложения двух плееров.
+ * Планирует кроссфейд: ждёт точку (duration - fadeMs) и запускает DualPlayerEngine.
  *
- * Контроллер — только «будильник»: он ждёт точку (длительность − фейд) и один раз
- * вызывает onTransitionPoint(fadeMs). Всю механику выполняет MusicViewModel, ровно
- * та же, что и при ручном переключении: линейный фейд огибающей мастера гасит
- * текущий трек, затем он останавливается, и ТОЛЬКО после этого стартует следующий
- * с плавным нарастанием. У этой схемы нет «мини-зависаний» кроссфейда, потому что
- * для каждого перехода создаётся своя анимация на уже прогретом кэше.
+ * Автопереход — это НАЛОЖЕНИЕ двух плееров (кроссфейд) с длительностью ИЗ НАСТРОЕК
+ * пользователя: главная фишка приложения. Для каждого перехода готовится свой плеер
+ * по прогретому файловому кэшу (TrackPreloader) — поэтому анимация работает без лагов.
  *
- * Если до конца трека меньше, чем выбранный фейд — фейд ужимается, а не отменяется.
- * При durationMs == 0 («Встык») расписание не строится вовсе: смена происходит по
- * факту окончания трека (onSongComplete → playNext), файловый кэш следующего трека
- * уже прогрет — это исключает гонку «комплит против перехода».
+ * Длительность из настроек применяется как есть. Если до конца трека меньше,
+ * чем выбранный фейд — фейд ужимается, а не отменяется. Раньше короткие
+ * треки / перемотка к концу полностью глушили переход, из‑за чего слайдер
+ * «длительность» выглядел мёртвым.
  */
-class TransitionController {
+class TransitionController(private val engine: DualPlayerEngine) {
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var schedulerJob: Job? = null
@@ -38,12 +35,18 @@ class TransitionController {
         getPositionMs: () -> Long,
         getDurationMs: () -> Long,
         settings: TransitionSettings,
-        onTransitionPoint: (fadeMs: Long) -> Unit
+        onTransitionComplete: () -> Unit,
+        onSwapReady: ((Song) -> Unit)? = null
     ) {
         cancelScheduler()
 
         if (settings.mode == TransitionMode.NONE || nextSong == null) {
+            if (!engine.isTransitionRunning()) engine.cancelNext()
             return
+        }
+
+        if (!engine.isTransitionRunning()) {
+            engine.cancelNext()
         }
 
         schedulerJob = scope.launch {
@@ -60,13 +63,47 @@ class TransitionController {
             // Оставляем 80 мс запаса до onCompletion исходящего трека.
             val maxFade = (duration - 80L).coerceAtLeast(0L)
             val fadeDur = requestedFade.coerceAtMost(maxFade)
+            val appliedSettings = if (fadeDur.toInt() == settings.durationMs) {
+                settings
+            } else {
+                settings.copy(durationMs = fadeDur.toInt())
+            }
+
             val transitionPoint = (duration - fadeDur).coerceAtLeast(0L)
+            val prebufferLead = 6_000L.coerceAtLeast(fadeDur + 1_500L)
+            val prebufferPoint = (transitionPoint - prebufferLead).coerceAtLeast(0L)
+
+            var prebuffered = false
 
             while (isActive) {
                 val pos = getPositionMs().coerceAtLeast(0L)
 
+                if (!prebuffered && pos >= prebufferPoint) {
+                    engine.prepareNext(nextSong.uri)
+                    prebuffered = true
+                }
+
                 if (pos >= transitionPoint) {
-                    onTransitionPoint(fadeDur)
+                    if (!engine.isTransitionRunning()) {
+                        if (prebuffered) {
+                            val ready = engine.waitUntilNextPrepared()
+                            if (!ready) {
+                                engine.cancelNext()
+                                return@launch
+                            }
+                        } else {
+                            engine.prepareNext(nextSong.uri)
+                            val ready = engine.waitUntilNextPrepared()
+                            if (!ready) {
+                                engine.cancelNext()
+                                return@launch
+                            }
+                        }
+                        if (!isActive) return@launch
+                        engine.performTransition(appliedSettings, onTransitionComplete) {
+                            onSwapReady?.invoke(nextSong)
+                        }
+                    }
                     break
                 }
 
@@ -84,6 +121,7 @@ class TransitionController {
 
     fun cancelPendingTransition() {
         cancelScheduler()
+        engine.cancelNext()
     }
 
     private fun cancelScheduler() {
