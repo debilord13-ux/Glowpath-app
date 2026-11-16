@@ -122,6 +122,29 @@ val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars", org.
     description = "Выкладывает android-all джарки для Robolectric в build/robolectric-sdk-jars"
     from(robolectricSdkJars)
     into(robolectricSdkDir)
+
+    // Копии из Gradle cache могут унаследовать права без чтения. Robolectric
+    // LocalDependencyResolver не пытается восстановить права и сразу завершает
+    // каждый тест с IllegalArgumentException, если canRead() возвращает false.
+    doLast {
+        val sdkDir = robolectricSdkDir.get().asFile
+        val requiredJars = listOf(
+            "android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar",
+            "android-all-instrumented-14-robolectric-10818077-i7.jar",
+        )
+
+        requiredJars.forEach { jarName ->
+            val jar = sdkDir.resolve(jarName)
+            check(jar.isFile) {
+                "Не найден SDK-файл Robolectric: ${jar.absolutePath}"
+            }
+            if (!jar.canRead()) {
+                check(jar.setReadable(true, false) && jar.canRead()) {
+                    "Не удалось включить чтение SDK-файла Robolectric: ${jar.absolutePath}"
+                }
+            }
+        }
+    }
 }
 
 tasks.configureEach {
