@@ -118,29 +118,38 @@ val robolectricSdkJars = configurations.create("robolectricSdkJars") {
 
 val robolectricSdkDir = layout.buildDirectory.dir("robolectric-sdk-jars")
 
-val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars", org.gradle.api.tasks.Copy::class.java) {
+val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars") {
     description = "Выкладывает android-all джарки для Robolectric в build/robolectric-sdk-jars"
-    from(robolectricSdkJars)
-    into(robolectricSdkDir)
+    inputs.files(robolectricSdkJars)
+    outputs.dir(robolectricSdkDir)
 
-    // Copy из Gradle cache может оставить SDK-jar без права чтения.
-    // Robolectric LocalDependencyResolver тогда падает во всех тестах.
     doLast {
         val sdkDir = robolectricSdkDir.get().asFile
+        check(sdkDir.mkdirs() || sdkDir.isDirectory) {
+            "Не удалось создать папку SDK Robolectric: ${sdkDir.absolutePath}"
+        }
+
+        // Копируем сами файлы зависимостей (с их Maven-именами), а не полагаемся
+        // на CopySpec.from(configuration), который в CI оставлял папку пустой.
+        robolectricSdkJars.files.forEach { source ->
+            val target = sdkDir.resolve(source.name)
+            source.copyTo(target, overwrite = true)
+            if (!target.canRead()) {
+                check(target.setReadable(true, false) && target.canRead()) {
+                    "Не удалось включить чтение SDK-файла Robolectric: ${target.absolutePath}"
+                }
+            }
+        }
+
         val requiredJars = listOf(
             "android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar",
             "android-all-instrumented-14-robolectric-10818077-i7.jar",
         )
-
         requiredJars.forEach { jarName ->
             val jar = sdkDir.resolve(jarName)
-            check(jar.isFile) {
-                "Не найден SDK-файл Robolectric: ${jar.absolutePath}"
-            }
-            if (!jar.canRead()) {
-                check(jar.setReadable(true, false) && jar.canRead()) {
-                    "Не удалось включить чтение SDK-файла Robolectric: ${jar.absolutePath}"
-                }
+            check(jar.isFile && jar.canRead()) {
+                "Не найден или недоступен SDK-файл Robolectric: ${jar.absolutePath}; " +
+                    "подготовлены: ${sdkDir.listFiles()?.joinToString { it.name }}"
             }
         }
     }
