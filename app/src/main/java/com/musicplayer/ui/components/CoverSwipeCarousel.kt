@@ -19,10 +19,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -103,6 +105,53 @@ fun CoverSwipeCarousel(
     val motion = remember { CoverMotion(current.songId) }
     val currentId = current.songId
 
+    // ── Анимация появления при АВТОМАТИЧЕСКОЙ смене трека ────────────────────
+    // Кроссфейд, кнопки «вперёд/назад», автопереход: раньше обложка новой песни
+    // просто подменялась мгновенно. Теперь она подъезжает сбоку и НАКРЫВАЕТ
+    // предыдущую — та же пластика, что у свайпа. Смена, пришедшая от самого
+    // свайпа, отдельно не анимируется: у свайпа своя посадка (сосед доезжает до
+    // центра, travel обнуляется, owner = новый id).
+    var autoAnim by remember { mutableStateOf<AutoCoverChange?>(null) }
+    var autoAnimJob by remember { mutableStateOf<Job?>(null) }
+    val autoAnimProgress = remember { mutableFloatStateOf(1f) }
+    // Обложка, которую пользователь видит сейчас, — источник «старого» слоя.
+    var lastShown by remember { mutableStateOf(current) }
+
+    LaunchedEffect(current) {
+        val swiping = motion.travelJob?.isActive == true || motion.travel != 0f
+        if (swiping || motion.owner == current.songId) {
+            // Смену уже везёт свайп (или она только что приземлилась) —
+            // отдельная анимация не нужна.
+            if (autoAnim == null) lastShown = current
+            return@LaunchedEffect
+        }
+        val from = autoAnim?.to ?: lastShown
+        if (from.songId == current.songId) {
+            // Трек тот же — обновилась только обложка/uri: тихо запоминаем.
+            if (autoAnim == null) lastShown = current
+            return@LaunchedEffect
+        }
+        // Направление: старая обложка стала «предыдущим соседом» → едем вперёд
+        // (новая въезжает справа); стала «следующим» → назад (слева); при прыжке
+        // (перемешивание) — вперёд, как у наиболее частого сценария.
+        val enterFromRight = when (from.songId) {
+            previous?.songId -> true
+            next?.songId -> false
+            else -> true
+        }
+        autoAnimJob?.cancel()
+        autoAnim = AutoCoverChange(from, current, enterFromRight)
+        autoAnimProgress.floatValue = 0f
+        lastShown = current
+        autoAnimJob = launch {
+            animate(initialValue = 0f, targetValue = 1f, animationSpec = AUTO_LAND) { value, _ ->
+                autoAnimProgress.floatValue = value
+            }
+            autoAnimProgress.floatValue = 1f
+            autoAnim = null
+        }
+    }
+
     // Соседи первыми, текущая поверх всех.
     val slots = buildList {
         if (previous != null) add(previous to -1)
@@ -124,6 +173,13 @@ fun CoverSwipeCarousel(
                     motion.travelJob = null
                     motion.tiltJob?.cancel()
                     motion.tiltJob = null
+                    // Автоанимацию смены тоже гасим: пользователь хочет рулить сам.
+                    autoAnimJob?.cancel()
+                    autoAnimJob = null
+                    if (autoAnim != null) {
+                        autoAnim = null
+                        autoAnimProgress.floatValue = 1f
+                    }
                     val ownerId = currentIdState
                     if (motion.owner != ownerId) {
                         motion.travel = 0f
@@ -211,17 +267,38 @@ fun CoverSwipeCarousel(
                 }
             }
     ) {
-        slots.forEach { (item, slot) ->
-            key(if (hasDuplicateIds) "${item.songId}#$slot" else item.songId.toString()) {
-                CoverCard(
-                    item = item,
-                    slot = slot,
-                    currentId = currentId,
-                    motion = motion,
-                    pagePx = pagePx,
-                    shape = shape,
-                )
+        val anim = autoAnim
+        if (anim == null) {
+            slots.forEach { (item, slot) ->
+                key(if (hasDuplicateIds) "${item.songId}#$slot" else item.songId.toString()) {
+                    CoverCard(
+                        item = item,
+                        slot = slot,
+                        currentId = currentId,
+                        motion = motion,
+                        pagePx = pagePx,
+                        shape = shape,
+                    )
+                }
             }
+        } else {
+            // Автосмена в полёте: слоты скрыты, показываем пару «старая + въезжающая».
+            val enterOffset = if (anim.enterFromRight) pagePx else -pagePx
+            val p = autoAnimProgress.floatValue
+            // Старая обложка стоит на месте и чуть притемняется — её накрывает новая.
+            AutoCoverLayer(
+                item = anim.from,
+                shape = shape,
+                translationX = 0f,
+                alpha = 1f - 0.45f * p,
+            )
+            // Новая подъезжает сбоку поверх старой — та же пружина, что у свайпа.
+            AutoCoverLayer(
+                item = anim.to,
+                shape = shape,
+                translationX = (1f - p) * enterOffset,
+                alpha = 1f,
+            )
         }
     }
 }
@@ -237,6 +314,56 @@ private class CoverMotion(initialOwner: Long) {
     var owner by mutableLongStateOf(initialOwner)
     var travelJob: Job? = null
     var tiltJob: Job? = null
+}
+
+/** Автоматическая смена трека в полёте: что показываем и с какой стороны въезжает новая. */
+private data class AutoCoverChange(
+    val from: CoverItem,
+    val to: CoverItem,
+    val enterFromRight: Boolean,
+)
+
+/**
+ * Слой автосмены: та же отрисовка, что у [CoverCard], но без жестов — позиция и
+ * прозрачность задаются напрямую. Новая обложка едет поверх старой.
+ */
+@Composable
+private fun AutoCoverLayer(
+    item: CoverItem,
+    shape: Shape,
+    translationX: Float,
+    alpha: Float,
+) {
+    val c = MaterialTheme.colorScheme
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer {
+                this.translationX = translationX
+                this.alpha = alpha
+                this.shape = shape
+                clip = true
+            }
+            .background(c.bgCard)
+            .border(1.5.dp, c.accentMuted.copy(alpha = 0.3f), shape),
+        contentAlignment = Alignment.Center
+    ) {
+        if (item.artUri != null) {
+            OptimizedAlbumArt(
+                uri = item.artUri,
+                title = "",
+                modifier = Modifier.fillMaxSize(),
+                targetSize = CoilSize(640, 640)
+            )
+        } else {
+            Icon(
+                painterResource(instrumentIconRes(item.songId)),
+                contentDescription = null,
+                tint = c.accentMuted,
+                modifier = Modifier.size(80.dp)
+            )
+        }
+    }
 }
 
 /** Отпустили без смены трека: обложка и наклон возвращаются пружиной с лёгким отскоком. */
@@ -393,6 +520,13 @@ private val FLY = spring<Float>(
     dampingRatio = Spring.DampingRatioNoBouncy,
     stiffness = 700f,
     visibilityThreshold = 1f,
+)
+
+/** Посадка обложки при автосмене: та же пружина, что и у свайпа (порог — для прогресса 0..1). */
+private val AUTO_LAND = spring<Float>(
+    dampingRatio = Spring.DampingRatioNoBouncy,
+    stiffness = 700f,
+    visibilityThreshold = 0.001f,
 )
 
 /** Возврат: лёгкий отскок, как в LatentJam. */

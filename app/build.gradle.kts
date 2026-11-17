@@ -12,8 +12,8 @@ android {
         applicationId = "com.musicplayer"
         minSdk = 26 // Как ты просил изначально
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.4.2-ci-stable"
+        versionCode = 15
+        versionName = "1.4.3"
 
         // Embed the identity of this APK, not the latest build available online.
         val revision = providers.environmentVariable("GITHUB_SHA").orNull.orEmpty()
@@ -106,24 +106,10 @@ android {
 // кэширует ~/.gradle между прогонами), а Robolectric получает их локально из
 // build/robolectric-sdk-jars через robolectric.dependency.dir — при тестах
 // сеть не используется вовсе. Имена файлов Gradle-кэша совпадают с ожидаемыми
-// LocalDependencyResolver: android-all-instrumented-<версия>.jar. Для каждой
-// версии отдельная конфигурация, иначе Gradle оставляет только версию-победителя.
+// LocalDependencyResolver: android-all-instrumented-<версия>.jar.
 // Версии соответствуют маппингу Robolectric 4.14.1 (DefaultSdkProvider):
-//   API 26 -> 8.0.0_r4-robolectric-r1-i7, API 34 -> 14-robolectric-10818077-i7,
-//   API 35 -> 15-robolectric-12650502-i7 (SDK по умолчанию для части тестов).
-val robolectricSdk26Jars = configurations.create("robolectricSdk26Jars") {
-    isCanBeConsumed = false
-    isCanBeResolved = true
-    isTransitive = false
-    isVisible = false
-}
-val robolectricSdk34Jars = configurations.create("robolectricSdk34Jars") {
-    isCanBeConsumed = false
-    isCanBeResolved = true
-    isTransitive = false
-    isVisible = false
-}
-val robolectricSdk35Jars = configurations.create("robolectricSdk35Jars") {
+//   API 26 -> 8.0.0_r4-robolectric-r1-i7, API 34 -> 14-robolectric-10818077-i7.
+val robolectricSdkJars = configurations.create("robolectricSdkJars") {
     isCanBeConsumed = false
     isCanBeResolved = true
     isTransitive = false
@@ -132,44 +118,10 @@ val robolectricSdk35Jars = configurations.create("robolectricSdk35Jars") {
 
 val robolectricSdkDir = layout.buildDirectory.dir("robolectric-sdk-jars")
 
-val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars") {
+val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars", org.gradle.api.tasks.Copy::class.java) {
     description = "Выкладывает android-all джарки для Robolectric в build/robolectric-sdk-jars"
-    inputs.files(robolectricSdk26Jars, robolectricSdk34Jars, robolectricSdk35Jars)
-    outputs.dir(robolectricSdkDir)
-
-    doLast {
-        val sdkDir = robolectricSdkDir.get().asFile
-        check(sdkDir.mkdirs() || sdkDir.isDirectory) {
-            "Не удалось создать папку SDK Robolectric: ${sdkDir.absolutePath}"
-        }
-
-        // Копируем сами файлы зависимостей (с их Maven-именами), а не полагаемся
-        // на CopySpec.from(configuration), который в CI оставлял папку пустой.
-        listOf(robolectricSdk26Jars, robolectricSdk34Jars, robolectricSdk35Jars)
-            .flatMap { it.files }
-            .forEach { source ->
-            val target = sdkDir.resolve(source.name)
-            source.copyTo(target, overwrite = true)
-            if (!target.canRead()) {
-                check(target.setReadable(true, false) && target.canRead()) {
-                    "Не удалось включить чтение SDK-файла Robolectric: ${target.absolutePath}"
-                }
-            }
-        }
-
-        val requiredJars = listOf(
-            "android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar",
-            "android-all-instrumented-14-robolectric-10818077-i7.jar",
-            "android-all-instrumented-15-robolectric-12650502-i7.jar",
-        )
-        requiredJars.forEach { jarName ->
-            val jar = sdkDir.resolve(jarName)
-            check(jar.isFile && jar.canRead()) {
-                "Не найден или недоступен SDK-файл Robolectric: ${jar.absolutePath}; " +
-                    "подготовлены: ${sdkDir.listFiles()?.joinToString { it.name }}"
-            }
-        }
-    }
+    from(robolectricSdkJars)
+    into(robolectricSdkDir)
 }
 
 tasks.configureEach {
@@ -178,13 +130,6 @@ tasks.configureEach {
         // Местная папка с джарками отключает сетевой Maven-резолвер Robolectric
         // (LegacyDependencyResolver проверяет её ДО похода в Maven Central).
         systemProperty("robolectric.dependency.dir", robolectricSdkDir.get().asFile.absolutePath)
-        testLogging {
-            events("failed")
-            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-            showCauses = true
-            showExceptions = true
-            showStackTraces = true
-        }
     }
 }
 
@@ -241,9 +186,8 @@ dependencies {
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")
 
-    // android-all SDK для тестов Robolectric (SDK 26, 34 и 35) — см. блок выше:
+    // android-all SDK для тестов Robolectric (SDK 26 и 34) — см. блок выше:
     // доставляются Gradle'ом с ретраями и кэшируются между прогонами CI.
-    add("robolectricSdk26Jars", "org.robolectric:android-all-instrumented:8.0.0_r4-robolectric-r1-i7")
-    add("robolectricSdk34Jars", "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
-    add("robolectricSdk35Jars", "org.robolectric:android-all-instrumented:15-robolectric-12650502-i7")
+    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:8.0.0_r4-robolectric-r1-i7")
+    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
 }

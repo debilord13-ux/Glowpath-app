@@ -316,9 +316,26 @@ internal fun SharedTransitionScope.AlbumDetailPage(
                             Box {
                                 IconButton(onClick = { sortMenu = true }) { Icon(Icons.Rounded.Sort, "Порядок треков") }
                                 DropdownMenu(expanded = sortMenu, onDismissRequest = { sortMenu = false }) {
-                                    AlbumSongSort.entries.forEach { option ->
-                                        DropdownMenuItem(text = { Text(if (option == AlbumSongSort.Original && album.playlist != null)
-                                            "Порядок плейлиста" else option.label, fontFamily = font) },
+                                    // В плейлистах — тот же набор, что и в меню медиатеки
+                                    // («По названию», «По исполнителю», «Недавние»), плюс
+                                    // «Порядок плейлиста», чтобы можно было вернуть ручной
+                                    // порядок после любой сортировки. В альбомах — полный список.
+                                    val menuOptions = if (album.playlist != null) listOf(
+                                        AlbumSongSort.Original,
+                                        AlbumSongSort.Title,
+                                        AlbumSongSort.Artist,
+                                        AlbumSongSort.DateAdded,
+                                    ) else AlbumSongSort.entries
+                                    menuOptions.forEach { option ->
+                                        DropdownMenuItem(
+                                            text = { Text(
+                                                when {
+                                                    option == AlbumSongSort.Original && album.playlist != null -> "Порядок плейлиста"
+                                                    album.playlist != null && option == AlbumSongSort.Title -> "По названию"
+                                                    album.playlist != null && option == AlbumSongSort.Artist -> "По исполнителю"
+                                                    album.playlist != null && option == AlbumSongSort.DateAdded -> "Недавние"
+                                                    else -> option.label
+                                                }, fontFamily = font) },
                                             leadingIcon = { if (sort == option) Icon(Icons.Rounded.Check, null) },
                                             onClick = { sort = option; sortMenu = false })
                                     }

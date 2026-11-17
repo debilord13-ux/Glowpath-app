@@ -2179,14 +2179,14 @@ fun HomeTopBar(
                                     Box {
                                         IconButton(
                                             onClick = { sortMenuOpen = true },
-                                            modifier = Modifier.size(28.dp)
+                                            modifier = Modifier.size(32.dp)
                                         ) {
                                             Icon(
                                                 Icons.Rounded.Sort,
                                                 contentDescription = "Сортировка треков",
                                                 tint = scheme.onSurfaceVariant,
                                                 modifier = Modifier
-                                                    .size(18.dp)
+                                                    .size(22.dp)
                                                     .graphicsLayer { alpha = expandedFraction }
                                             )
                                         }
