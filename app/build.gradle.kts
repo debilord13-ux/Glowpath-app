@@ -106,10 +106,17 @@ android {
 // кэширует ~/.gradle между прогонами), а Robolectric получает их локально из
 // build/robolectric-sdk-jars через robolectric.dependency.dir — при тестах
 // сеть не используется вовсе. Имена файлов Gradle-кэша совпадают с ожидаемыми
-// LocalDependencyResolver: android-all-instrumented-<версия>.jar.
+// LocalDependencyResolver: android-all-instrumented-<версия>.jar. Для каждой
+// версии отдельная конфигурация, иначе Gradle оставляет только версию-победителя.
 // Версии соответствуют маппингу Robolectric 4.14.1 (DefaultSdkProvider):
 //   API 26 -> 8.0.0_r4-robolectric-r1-i7, API 34 -> 14-robolectric-10818077-i7.
-val robolectricSdkJars = configurations.create("robolectricSdkJars") {
+val robolectricSdk26Jars = configurations.create("robolectricSdk26Jars") {
+    isCanBeConsumed = false
+    isCanBeResolved = true
+    isTransitive = false
+    isVisible = false
+}
+val robolectricSdk34Jars = configurations.create("robolectricSdk34Jars") {
     isCanBeConsumed = false
     isCanBeResolved = true
     isTransitive = false
@@ -120,7 +127,7 @@ val robolectricSdkDir = layout.buildDirectory.dir("robolectric-sdk-jars")
 
 val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars") {
     description = "Выкладывает android-all джарки для Robolectric в build/robolectric-sdk-jars"
-    inputs.files(robolectricSdkJars)
+    inputs.files(robolectricSdk26Jars, robolectricSdk34Jars)
     outputs.dir(robolectricSdkDir)
 
     doLast {
@@ -131,7 +138,7 @@ val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars") {
 
         // Копируем сами файлы зависимостей (с их Maven-именами), а не полагаемся
         // на CopySpec.from(configuration), который в CI оставлял папку пустой.
-        robolectricSdkJars.files.forEach { source ->
+        listOf(robolectricSdk26Jars, robolectricSdk34Jars).flatMap { it.files }.forEach { source ->
             val target = sdkDir.resolve(source.name)
             source.copyTo(target, overwrite = true)
             if (!target.canRead()) {
@@ -219,6 +226,6 @@ dependencies {
 
     // android-all SDK для тестов Robolectric (SDK 26 и 34) — см. блок выше:
     // доставляются Gradle'ом с ретраями и кэшируются между прогонами CI.
-    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:8.0.0_r4-robolectric-r1-i7")
-    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
+    add("robolectricSdk26Jars", "org.robolectric:android-all-instrumented:8.0.0_r4-robolectric-r1-i7")
+    add("robolectricSdk34Jars", "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
 }
