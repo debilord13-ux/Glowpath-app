@@ -1050,6 +1050,28 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         persistUserAlbums(updated)
     }
 
+    /**
+     * Добавляет выбранные песни сразу в несколько плейлистов за один проход:
+     * режим выделения в медиатеке → «Добавить в плейлисты» → отметить плейлисты
+     * → «Сохранить». Дубликаты в плейлисте не создаются (normalizeSongIds),
+     * обложка плейлиста обновляется, если её ещё не было. Одна запись в prefs.
+     */
+    fun addSongsToUserAlbums(albumIds: Collection<String>, songIds: Collection<Long>) {
+        if (songIds.isEmpty() || albumIds.isEmpty()) return
+        val wanted = albumIds.toSet()
+        val now = System.currentTimeMillis()
+        val updated = _userAlbums.value.map { album ->
+            if (album.id !in wanted) return@map album
+            val mergedSongIds = normalizeSongIds(album.songIds + songIds)
+            album.copy(
+                songIds = mergedSongIds,
+                coverSongId = resolveAlbumCover(mergedSongIds, album.coverSongId),
+                updatedAt = now
+            )
+        }
+        persistUserAlbums(updated)
+    }
+
     fun removeSongsFromUserAlbum(albumId: String, songIds: Collection<Long>) {
         if (songIds.isEmpty()) return
         val removedIds = songIds.toSet()

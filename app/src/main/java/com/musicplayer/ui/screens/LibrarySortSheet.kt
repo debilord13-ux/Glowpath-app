@@ -36,16 +36,26 @@ internal data class LibrarySortOption(
 )
 
 internal val librarySortOptions = listOf(
-    LibrarySortOption(SortOrder.TITLE, "По названию (А–Я)", "Названия треков по алфавиту", Icons.Rounded.SortByAlpha),
+    LibrarySortOption(SortOrder.TITLE, "По названию", "Названия треков по алфавиту", Icons.Rounded.SortByAlpha),
     LibrarySortOption(SortOrder.TITLE_DESC, "По названию (Я–А)", "Названия треков в обратном алфавитном порядке", Icons.Rounded.SortByAlpha),
-    LibrarySortOption(SortOrder.ARTIST, "По исполнителю (А–Я)", "Имена исполнителей по алфавиту", Icons.Rounded.PersonOutline),
+    LibrarySortOption(SortOrder.ARTIST, "По исполнителю", "Имена исполнителей по алфавиту", Icons.Rounded.PersonOutline),
     LibrarySortOption(SortOrder.ARTIST_DESC, "По исполнителю (Я–А)", "Имена исполнителей в обратном алфавитном порядке", Icons.Rounded.PersonOutline),
     LibrarySortOption(SortOrder.ALBUM, "По альбому (А–Я)", "Названия альбомов по алфавиту", Icons.Rounded.Album),
     LibrarySortOption(SortOrder.ALBUM_DESC, "По альбому (Я–А)", "Названия альбомов в обратном алфавитном порядке", Icons.Rounded.Album),
     LibrarySortOption(SortOrder.DURATION, "По длительности (короткие)", "От коротких треков к длинным", Icons.Rounded.Schedule),
     LibrarySortOption(SortOrder.DURATION_DESC, "По длительности (длинные)", "От длинных треков к коротким", Icons.Rounded.Schedule),
-    LibrarySortOption(SortOrder.DATE_ADDED, "По дате добавления (новые)", "Сначала недавно добавленные", Icons.Rounded.NewReleases),
+    LibrarySortOption(SortOrder.DATE_ADDED, "Недавние", "Сначала недавно добавленные", Icons.Rounded.NewReleases),
     LibrarySortOption(SortOrder.DATE_ADDED_OLDEST, "По дате добавления (старые)", "Сначала давно добавленные", Icons.Rounded.NewReleases),
+)
+
+// Состав меню сортировки медиатеки (и в шапке, и в настройках): только три
+// вида — «По названию», «По исполнителю» и «Недавние». Остальные варианты
+// убраны из меню по запросу; enum и sortedForOrder сохраняют их для плейлистов
+// и для уже сохранённого выбора, поэтому список ниже — чисто порядок показа.
+internal val libraryMenuSortOptions = listOf(
+    librarySortOptions.first { it.order == SortOrder.TITLE },
+    librarySortOptions.first { it.order == SortOrder.ARTIST },
+    librarySortOptions.first { it.order == SortOrder.DATE_ADDED },
 )
 
 @Composable
@@ -159,7 +169,7 @@ internal fun LibrarySortSheetContent(
                 .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            librarySortOptions.forEach { option ->
+            libraryMenuSortOptions.forEach { option ->
                 val selected = sortOrder == option.order
                 val container by animateColorAsState(
                     if (selected) colors.secondaryContainer else colors.surfaceContainer,

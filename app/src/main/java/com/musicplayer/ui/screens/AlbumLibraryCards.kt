@@ -196,7 +196,6 @@ internal fun SharedTransitionScope.AlbumDetailPage(
     var query by rememberSaveable(album.key) { mutableStateOf("") }
     var sort by rememberSaveable(album.key) { mutableStateOf(AlbumSongSort.Original) }
     var sortMenu by remember { mutableStateOf(false) }
-    var optionsMenu by remember { mutableStateOf(false) }
     val tracks = remember(album.songs, sort) {
         when (sort) {
             AlbumSongSort.Original -> album.songs
@@ -237,16 +236,13 @@ internal fun SharedTransitionScope.AlbumDetailPage(
                 navigationIcon = { IconButton(onClick = { actions.onOpen(null) }) { Icon(Icons.Rounded.ArrowBack, "К альбомам") } },
                 actions = {
                     album.playlist?.let { playlist ->
-                        Box {
-                            IconButton(onClick = { optionsMenu = true }) { Icon(Icons.Rounded.MoreVert, "Действия с плейлистом") }
-                            DropdownMenu(expanded = optionsMenu, onDismissRequest = { optionsMenu = false }) {
-                                DropdownMenuItem(text = { Text("Редактировать", fontFamily = font) },
-                                    leadingIcon = { Icon(Icons.Rounded.Edit, null) },
-                                    onClick = { optionsMenu = false; actions.onEdit(playlist) })
-                                DropdownMenuItem(text = { Text("Удалить плейлист", fontFamily = font) },
-                                    leadingIcon = { Icon(Icons.Rounded.DeleteOutline, null) },
-                                    onClick = { optionsMenu = false; actions.onDelete(playlist) })
-                            }
+                        // Меню «⋮» убрано: обе его функции вынесены прямо на
+                        // экран — карандаш (изменить плейлист) и мусорка (удалить).
+                        IconButton(onClick = { actions.onEdit(playlist) }) {
+                            Icon(Icons.Rounded.Edit, "Изменить плейлист")
+                        }
+                        IconButton(onClick = { actions.onDelete(playlist) }) {
+                            Icon(Icons.Rounded.Delete, "Удалить плейлист")
                         }
                     }
                 },

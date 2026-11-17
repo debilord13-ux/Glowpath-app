@@ -231,6 +231,8 @@ fun HomeScreen(
     var searchQuery     by rememberSaveable { mutableStateOf("") }
     var isSearching     by rememberSaveable { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showAddToPlaylistSheet by remember { mutableStateOf(false) }
+    val userAlbums by viewModel.userAlbums.collectAsState()
     var pendingDeviceDelete by remember { mutableStateOf<List<Song>>(emptyList()) }
     var deletingIds     by remember { mutableStateOf(setOf<Long>()) }
     var selectedIds     by remember { mutableStateOf(setOf<Long>()) }
@@ -472,6 +474,7 @@ fun HomeScreen(
                     onClearSearch    = { searchQuery = "" },
                     onClearSelection = { selectedIds = emptySet() },
                     onSelectAll      = { selectedIds = filteredSongs.map { it.id }.toSet() },
+                    onAddSelectedToPlaylist = { showAddToPlaylistSheet = true },
                     onDeleteSelected = {
                         if (selectedIds.isNotEmpty()) {
                             showDeleteDialog = true
@@ -665,6 +668,21 @@ fun HomeScreen(
                 }
             }
         }
+    }
+
+    if (showAddToPlaylistSheet && isSelectionMode) {
+        // Шторка «Добавить в плейлисты»: отмечаешь нужные плейлисты, жмёшь
+        // «Сохранить» — выбранные песни добавляются во все отмеченные плейлисты.
+        PlaylistPickerSheet(
+            playlists = userAlbums,
+            songCount = selectedIds.size,
+            onDismiss = { showAddToPlaylistSheet = false },
+            onSave = { playlistIds ->
+                viewModel.addSongsToUserAlbums(playlistIds, selectedIds)
+                selectedIds = emptySet()
+                showAddToPlaylistSheet = false
+            },
+        )
     }
 
     if (showDeleteDialog) {
@@ -1966,6 +1984,7 @@ fun HomeTopBar(
     onClearSearch: () -> Unit,
     onClearSelection: () -> Unit,
     onSelectAll: () -> Unit,
+    onAddSelectedToPlaylist: () -> Unit,
     onDeleteSelected: () -> Unit,
     showMenu: Boolean,
     onMenuToggle: () -> Unit,
@@ -2043,6 +2062,11 @@ fun HomeTopBar(
                         actions = {
                             IconButton(onClick = onSelectAll) {
                                 Icon(Icons.Rounded.SelectAll, contentDescription = "Выбрать все")
+                            }
+                            // Новая кнопка между «Выбрать все» и «Удалить»: открывает
+                            // шторку выбора плейлистов и сохраняет выбранные песни в них.
+                            IconButton(onClick = onAddSelectedToPlaylist) {
+                                Icon(Icons.Rounded.FolderOpen, contentDescription = "Добавить в плейлисты")
                             }
                             IconButton(onClick = onDeleteSelected) {
                                 Icon(Icons.Rounded.Delete, contentDescription = "Удалить выбранные треки")
@@ -2140,6 +2164,8 @@ fun HomeTopBar(
                                     .padding(horizontal = 16.dp)
                             ) {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                    // Счётчик без weight(1f): кнопка сортировки стоит
+                                    // ВПЛОТНУЮ после надписи «N трека», а не у правого края.
                                     Text(
                                         "${topBar.songCountPrefix}$sortedSongsCount ${pluralTracks(sortedSongsCount)}",
                                         style = MaterialTheme.typography.labelLarge,
@@ -2147,7 +2173,7 @@ fun HomeTopBar(
                                         color = scheme.onSurfaceVariant,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.weight(1f).graphicsLayer { alpha = expandedFraction }
+                                        modifier = Modifier.graphicsLayer { alpha = expandedFraction }
                                     )
                                     var sortMenuOpen by remember { mutableStateOf(false) }
                                     Box {
@@ -2170,7 +2196,7 @@ fun HomeTopBar(
                                             shape = MaterialTheme.shapes.large,
                                             containerColor = scheme.surfaceContainer
                                         ) {
-                                            librarySortOptions.forEach { option ->
+                                            libraryMenuSortOptions.forEach { option ->
                                                 DropdownMenuItem(
                                                     text = { Text(option.title, fontFamily = font) },
                                                     leadingIcon = {

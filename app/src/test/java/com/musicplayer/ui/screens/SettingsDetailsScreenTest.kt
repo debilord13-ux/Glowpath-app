@@ -93,7 +93,10 @@ class SettingsDetailsScreenTest {
 
     @Test fun everySortChoiceIsAppliedOnceAndSurvivesReopening() {
         showSort()
-        SortOrder.entries.forEach { order ->
+        // Меню медиатеки показывает ровно libraryMenuSortOptions (три вида):
+        // тест идёт по нему, чтобы не разойтись с реальным составом меню.
+        libraryMenuSortOptions.forEach { option ->
+            val order = option.order
             compose.onNodeWithText("Сортировка").performClick()
             // performScrollToNode по контейнеру: работает даже если опция сейчас
             // за пределами видимой части шторки (на маленьких экранах нижние
@@ -109,17 +112,19 @@ class SettingsDetailsScreenTest {
             compose.onNodeWithTag("library_sort_${order.name}").assertIsSelected()
             compose.onNodeWithContentDescription("Закрыть сортировку").performClick()
         }
-        compose.runOnIdle { assertEquals(SortOrder.entries, changes) }
+        compose.runOnIdle { assertEquals(libraryMenuSortOptions.map { it.order }, changes) }
     }
 
     @Test fun closingSortWithoutChoosingKeepsTheCurrentOrder() {
-        selected = SortOrder.ALBUM
+        // Один из оставшихся в меню вариантов: шторка показывает выбранный
+        // пункт, закрытие без выбора ничего не меняет и не дёргает колбэк.
+        selected = SortOrder.ARTIST
         showSort()
         compose.onNodeWithText("Сортировка").performClick()
-        compose.onNodeWithTag("library_sort_ALBUM").assertIsSelected()
+        compose.onNodeWithTag("library_sort_ARTIST").assertIsSelected()
         compose.onNodeWithContentDescription("Закрыть сортировку").performClick()
         compose.onNodeWithTag("library_sort_options").assertDoesNotExist()
-        compose.runOnIdle { assertEquals(SortOrder.ALBUM, selected); assertTrue(changes.isEmpty()) }
+        compose.runOnIdle { assertEquals(SortOrder.ARTIST, selected); assertTrue(changes.isEmpty()) }
     }
 
     @Config(qualifiers = "w320dp-h568dp")
