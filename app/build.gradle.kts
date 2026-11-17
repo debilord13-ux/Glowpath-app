@@ -96,32 +96,60 @@ android {
     }
 }
 
-// ── SDK-джарки Robolectric: через Gradle, НЕ через скачивание в момент тестов ──
-// По умолчанию Robolectric качает android-all с Maven Central ПРЯМО ВО ВРЕМЯ
-// запуска тестов. GitHub-раннер каждый раз свежий (~/.m2 не сохраняется между
-// прогонами), и любой сбой или лимит Maven Central (HTTP 429) мгновенно ронял
-// ВСЕ тесты сразу с IOException из MavenArtifactFetcher — код приложения и сами
-// тесты были ни при чём. Теперь SDK-джарки — обычные Gradle-зависимости: их
-// качает Gradle (ci/gradle-retry.sh повторяет при сетевых сбоях, setup-gradle
-// кэширует ~/.gradle между прогонами), а Robolectric получает их локально из
-// build/robolectric-sdk-jars через robolectric.dependency.dir — при тестах
-// сеть не используется вовсе. Имена файлов Gradle-кэша совпадают с ожидаемыми
-// LocalDependencyResolver: android-all-instrumented-<версия>.jar.
-// Версии соответствуют маппингу Robolectric 4.14.1 (DefaultSdkProvider):
-//   API 26 -> 8.0.0_r4-robolectric-r1-i7, API 34 -> 14-robolectric-10818077-i7.
-val robolectricSdkJars = configurations.create("robolectricSdkJars") {
-    isCanBeConsumed = false
-    isCanBeResolved = true
-    isTransitive = false
-    isVisible = false
+// ── SDK-джарки Robolectric: скачивает CI-шаг ДО Gradle, Gradle только проверяет ──
+// Robolectric без локальных джарок качает android-all с Maven Central ПРЯМО ВО
+// ВРЕМЯ запуска тестов. GitHub-раннеры делят общие IP, и Maven Central регулярно
+// отвечает им HTTP 429 — тогда ВСЕ тесты падают мгновенно и одинаково, а сборка
+// умирает без внятного объяснения. Качать их же через Gradle-зависимости тоже
+// ненадёжно: сбой резолюции внутри Copy-задачи ломает сборку молча или с
+// невнятным текстом. Поэтому теперь джарки забирает отдельный шаг workflow
+// (ci/fetch-robolectric-sdk.sh: 4 зеркала Maven Central, повторы, проверка
+// размера и ZIP-подписи) ещё ДО запуска Gradle, а actions/cache сохраняет их
+// между прогонами — обычно скачивание происходит один раз на всё время.
+// Директория — app/robolectric-sdk-jars. Этот файл лишь:
+//   1) если обе джарки уже на месте, выставляет robolectric.dependency.dir —
+//      тогда Robolectric берёт их с диска и в сеть не ходит вовсе;
+//   2) задача prepareRobolectricSdkJars в CI (env CI/GITHUB_ACTIONS) громко и
+//      понятно падает, если джарок нет — вместо 64 одинаковых исключений
+//      LocalDependencyResolver в отчёте тестов; локально же (вне CI) только
+//      предупреждает, и Robolectric качает джарки сам, как раньше.
+// Версии соответствуют маппингу Robolectric 4.14.1 (DefaultSdkProvider,
+// PREINSTRUMENTED_VERSION = 7):
+//   API 26 -> android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar
+//   API 34 -> android-all-instrumented-14-robolectric-10818077-i7.jar
+val robolectricSdkJarNames = listOf(
+    "android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar",
+    "android-all-instrumented-14-robolectric-10818077-i7.jar",
+)
+
+val robolectricSdkDir: java.io.File = layout.projectDirectory.dir("robolectric-sdk-jars").asFile
+
+fun robolectricSdkJarValid(name: String): Boolean {
+    val f = java.io.File(robolectricSdkDir, name)
+    return f.isFile && f.length() > 50_000_000L
 }
 
-val robolectricSdkDir = layout.buildDirectory.dir("robolectric-sdk-jars")
+fun robolectricSdkReady(): Boolean =
+    robolectricSdkDir.isDirectory && robolectricSdkJarNames.all { robolectricSdkJarValid(it) }
 
-val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars", org.gradle.api.tasks.Copy::class.java) {
-    description = "Выкладывает android-all джарки для Robolectric в build/robolectric-sdk-jars"
-    from(robolectricSdkJars)
-    into(robolectricSdkDir)
+val prepareRobolectricSdkJars = tasks.register("prepareRobolectricSdkJars") {
+    description = "Проверяет наличие android-all джарок Robolectric (скачивает ci/fetch-robolectric-sdk.sh)"
+    doLast {
+        val missing = robolectricSdkJarNames.filterNot { robolectricSdkJarValid(it) }
+        if (missing.isNotEmpty()) {
+            val hint =
+                "Не найдены SDK-джарки Robolectric в ${robolectricSdkDir.absolutePath}: $missing. " +
+                    "Сначала выполните bash ci/fetch-robolectric-sdk.sh — он скачивает их " +
+                    "с зеркал Maven Central и кладёт в app/robolectric-sdk-jars. Без них " +
+                    "тесты падают с IllegalArgumentException из LocalDependencyResolver."
+            val isCiRun = (System.getenv("CI") ?: "").equals("true", ignoreCase = true) ||
+                (System.getenv("GITHUB_ACTIONS") ?: "").equals("true", ignoreCase = true)
+            if (isCiRun) {
+                throw org.gradle.api.GradleException(hint)
+            }
+            logger.warn("ВНИМАНИЕ: $hint — вне CI Robolectric скачает джарки с Maven Central сам.")
+        }
+    }
 }
 
 tasks.configureEach {
@@ -129,7 +157,11 @@ tasks.configureEach {
         dependsOn(prepareRobolectricSdkJars)
         // Местная папка с джарками отключает сетевой Maven-резолвер Robolectric
         // (LegacyDependencyResolver проверяет её ДО похода в Maven Central).
-        systemProperty("robolectric.dependency.dir", robolectricSdkDir.get().asFile.absolutePath)
+        // Свойство выставляем только если джарки уже на месте — так локальный
+        // запуск без CI-шага не ломается и качает джарки сам, как раньше.
+        if (robolectricSdkReady()) {
+            systemProperty("robolectric.dependency.dir", robolectricSdkDir.absolutePath)
+        }
     }
 }
 
@@ -185,9 +217,4 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.14.1")
     testImplementation("androidx.compose.ui:ui-test-junit4")
-
-    // android-all SDK для тестов Robolectric (SDK 26 и 34) — см. блок выше:
-    // доставляются Gradle'ом с ретраями и кэшируются между прогонами CI.
-    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:8.0.0_r4-robolectric-r1-i7")
-    add("robolectricSdkJars", "org.robolectric:android-all-instrumented:14-robolectric-10818077-i7")
 }

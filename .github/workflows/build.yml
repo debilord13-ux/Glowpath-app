@@ -33,6 +33,18 @@ jobs:
         with:
           packages: platform-tools
 
+      # SDK-джарки Robolectric кэшируются отдельно: их скачивает
+      # ci/fetch-robolectric-sdk.sh, и пока кэш жив, Maven Central не
+      # запрашивается вовсе — тесты больше не зависят от его HTTP 429.
+      - name: Cache Robolectric SDK jars
+        uses: actions/cache@v4
+        with:
+          path: app/robolectric-sdk-jars
+          key: robolectric-sdk-jars-v1
+
+      - name: Fetch Robolectric SDK jars
+        run: bash ci/fetch-robolectric-sdk.sh
+
       # Кэш ~/.gradle между запусками: зависимости и дистрибутив Gradle
       # скачиваются один раз, после чего Maven Central не запрашивается вовсе.
       # Раньше каждый прогон качал сотни артефактов заново и периодически
