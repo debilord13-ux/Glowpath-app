@@ -168,6 +168,13 @@ tasks.configureEach {
         // Местная папка с джарками отключает сетевой Maven-резолвер Robolectric
         // (LegacyDependencyResolver проверяет её ДО похода в Maven Central).
         systemProperty("robolectric.dependency.dir", robolectricSdkDir.get().asFile.absolutePath)
+        testLogging {
+            events("failed")
+            exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+            showCauses = true
+            showExceptions = true
+            showStackTraces = true
+        }
     }
 }
 
