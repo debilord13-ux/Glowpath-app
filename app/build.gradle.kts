@@ -127,7 +127,7 @@ val robolectricSdkJarNames = listOf(
 val robolectricSdkDir: java.io.File = layout.projectDirectory.dir("robolectric-sdk-jars").asFile
 
 fun robolectricSdkJarValid(name: String): Boolean {
-    val f = java.io.File(robolectricSdkDir, name)
+    val f = File(robolectricSdkDir, name)
     return f.isFile && f.length() > 50_000_000L
 }
 
