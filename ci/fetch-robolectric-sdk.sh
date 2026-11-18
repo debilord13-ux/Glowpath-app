@@ -16,6 +16,7 @@ set -u
 DIR="app/robolectric-sdk-jars"
 GROUP_PATH="org/robolectric/android-all-instrumented"
 MIN_SIZE=52428800  # 50 МБ: настоящая джарка ~110 МБ, страница ошибки — килобайты
+mkdir -p "$DIR"
 
 MIRRORS=(
     "https://repo1.maven.org/maven2"
@@ -90,6 +91,7 @@ download_one() {
 
 download_one "android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar" "8.0.0_r4-robolectric-r1-i7" || true
 download_one "android-all-instrumented-14-robolectric-10818077-i7.jar" "14-robolectric-10818077-i7" || true
+download_one "android-all-instrumented-15-robolectric-12650502-i7.jar" "15-robolectric-12650502-i7" || true
 
 if [ "$fail" -ne 0 ]; then
     exit 1

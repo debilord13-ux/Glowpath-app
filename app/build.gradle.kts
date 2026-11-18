@@ -117,9 +117,11 @@ android {
 // PREINSTRUMENTED_VERSION = 7):
 //   API 26 -> android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar
 //   API 34 -> android-all-instrumented-14-robolectric-10818077-i7.jar
+//   API 35 -> android-all-instrumented-15-robolectric-12650502-i7.jar
 val robolectricSdkJarNames = listOf(
     "android-all-instrumented-8.0.0_r4-robolectric-r1-i7.jar",
     "android-all-instrumented-14-robolectric-10818077-i7.jar",
+    "android-all-instrumented-15-robolectric-12650502-i7.jar",
 )
 
 val robolectricSdkDir: java.io.File = layout.projectDirectory.dir("robolectric-sdk-jars").asFile
